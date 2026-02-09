@@ -968,6 +968,24 @@ The Phase 3 boiler simulation in the steam throttle design needs to know actual 
 
 ---
 
+## Ecosystem Integration
+
+The calibration track is part of an interconnected system where each project reinforces the others:
+
+**Test Track → Geometry Car:** The vibration analysis (Phase 6) ranks every locomotive in the fleet by mechanism noise. The quietest loco becomes the designated survey tractor for the geometry car, minimizing mechanical vibration that couples through the draft gear and rails into the IMU. The vibration profile at each speed step provides a known baseline that can be subtracted from geometry car IMU data in post-processing.
+
+**Test Track → JMRI:** Calibrated speed tables feed RosterSpeedProfile, which warrants, dispatcher, and the throttle display all consume. Start-of-motion thresholds and deceleration profiles enable accurate block timing and braking distance calculation.
+
+**Test Track → Geometry Car (speed):** The geometry car needs to know its actual velocity to convert time-domain IMU data into spatial measurements (defects per meter, not per second). With a calibrated loco pulling it, the car knows its true speed from the commanded speed step — no need for a separate speed sensor on the car.
+
+**Test Track → Audio Engine (COVA):** Speed-correlated audio playback uses measured velocity instead of guessing from throttle percentage. A loco that runs fast at low speed steps gets appropriately faster wheel sound. Decoder volume measurements ensure fleet-wide consistency.
+
+**Test Track → Consisting:** The primary original purpose — speed-match locomotives with different decoders so they can MU without fighting each other.
+
+**Geometry Car → Test Track:** Geometry survey data identifies track sections with poor railhead quality, gauge problems, or rough joints. The calibration track itself should be surveyed to confirm it's smooth enough to not introduce speed variation from track-induced resistance changes.
+
+---
+
 ## Future Enhancements
 
 - **RDM6300 RFID reader** on the same board — automatically identify which locomotive is on the test track without manual address entry
