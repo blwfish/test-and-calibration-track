@@ -1,0 +1,35 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Calibration output data (per-loco, potentially large)
+calibration-data/*.json
+
+# KiCad backups and generated files
+hardware/kicad/*-backups/
+hardware/kicad/*.bak
+hardware/kicad/*-cache.lib
+hardware/kicad/fp-info-cache
+hardware/kicad/gerber/
+
+# 3D print sliced files
+hardware/3d-prints/*.gcode
+hardware/3d-prints/*.ctb
+hardware/3d-prints/*.lys
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
