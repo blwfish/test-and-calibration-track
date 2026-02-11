@@ -14,10 +14,14 @@ firmware/           PlatformIO project (ESP32, Arduino framework)
   test/             Unit tests (native desktop, no hardware needed)
     stubs/          Arduino.h stub for native compilation
     test_speed_calc/  Speed calculation tests (13 cases)
+    test_load_cell/   Load cell conversion tests (9 cases)
+    test_vibration/   Vibration analysis tests (10 cases)
+    test_audio/       Audio dB conversion tests (11 cases)
 docs/               Specifications and design documents
 scripts/            JMRI bridge and orchestration scripts
   jmri_throttle_bridge.py   Jython script for JMRI (MQTT→DCC throttle)
   loco_control.py           Python CLI for loco control and testing
+  calibrate_speed.py        Automated speed calibration sweep
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket STL/STEP files
@@ -79,11 +83,12 @@ All topics under `{prefix}/speed-cal/{name}/`:
 |-------------|-----------|-------------|
 | `arm` | to ESP32 | Arm sensors for next pass |
 | `stop` | to ESP32 | Cancel/disarm |
-| `status` | to ESP32 | Request status |
+| `status` | to/from ESP32 | Request/publish status |
+| `tare` | to ESP32 | Tare (zero) load cell |
+| `load` | to/from ESP32 | Request/publish load cell reading |
+| `vibration` | to/from ESP32 | Start capture / publish analysis |
+| `audio` | to/from ESP32 | Start capture / publish analysis |
 | `result` | from ESP32 | Speed measurement JSON |
-| `vibration` | from ESP32 | Vibration analysis JSON |
-| `audio` | from ESP32 | Audio level JSON |
-| `load` | from ESP32 | Load cell reading JSON |
 | `error` | from ESP32 | Error report |
 
 Default config: prefix=`/cova`, name=`speed-cal`, broker port 1883.
@@ -136,11 +141,15 @@ pip3 install paho-mqtt
 python3 scripts/loco_control.py --broker 192.168.68.250 --address 3
 ```
 
-`scripts/calibrate_speed.py` (future) runs on any machine with MQTT access:
-1. Binary search for start-of-motion threshold
-2. Sweep speed steps, arm sensors, collect results
-3. Output calibration JSON
-4. Optionally import into JMRI roster via Jython script
+`scripts/calibrate_speed.py` — automated calibration sweep:
+```bash
+python3 scripts/calibrate_speed.py --address 3 --broker 192.168.68.250
+python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
+```
+1. Binary search for start-of-motion threshold (forward & reverse)
+2. Sweep speed steps with multi-pass averaging at low speeds
+3. Output calibration JSON to `calibration-data/`
+4. Shuttle track: alternates direction each pass
 
 ## Related Projects
 
@@ -153,20 +162,26 @@ python3 scripts/loco_control.py --broker 192.168.68.250 --address 3
 - [x] Phase 1: Hardware build & basic detection (4 sensors on breadboard prototype)
 - [ ] Phase 2: Full 16-sensor PCB + MCP23017 interrupt timing
 - [x] Phase 3: MQTT integration & speed calculation firmware
-- [ ] Phase 4: Orchestration script (start-of-motion + full sweep)
-- [ ] Phase 5: Load cell (drawbar pull measurement)
-- [ ] Phase 6: Vibration & audio analysis
+- [x] Phase 4: Orchestration script (start-of-motion + full sweep) — software ready, needs hardware test
+- [x] Phase 5: Load cell (drawbar pull measurement) — firmware ready, needs hardware test
+- [x] Phase 6: Vibration & audio analysis — firmware ready, needs hardware test
 - [ ] Phase 7: JMRI roster integration
 - [ ] Phase 8: Fleet calibration
 
-### Phase 1 Status (current)
-- Firmware v0.3 running on ESP32 WROOM-32
+### Current Status (v0.4)
+- Firmware v0.4 running on ESP32 WROOM-32
 - MCP23017 at 0x27 responding, interrupt-driven detection working
 - WiFi AP+STA mode with captive portal and NVS credential storage
-- Web UI with real-time WebSocket status, arm/disarm, WiFi config, MQTT config
-- MQTT connected to Mosquitto broker, subscribes to arm/stop/status commands
+- Web UI with real-time WebSocket status, arm/disarm, WiFi/MQTT config
+- Web UI cards for load cell, vibration, and audio with capture controls
+- MQTT connected to Mosquitto broker, full command set (arm/stop/status/tare/load/vibration/audio)
 - Speed calculation with direction detection and per-interval analysis
-- 13 native unit tests passing (speed_calc)
+- HX711 load cell driver (bit-banged, EMA smoothing, tare support)
+- Piezo vibration capture (ADC, peak-to-peak and RMS analysis)
+- INMP441 audio capture (I2S, RMS dB and peak dB analysis)
+- 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
 - JMRI Jython throttle bridge script ready
-- Python loco control CLI ready
-- Waiting for TCRT5000 LM393 breakout boards (sensors currently floating)
+- Python loco control CLI with sensor commands
+- Automated calibration script with dry-run mode
+- Calibration track replaces programming track (SPROG program track output)
+- Waiting for TCRT5000 LM393 breakout boards + HX711 + piezo + INMP441

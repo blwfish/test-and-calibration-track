@@ -2,6 +2,9 @@
 #include "config.h"
 #include "sensor_array.h"
 #include "web_server.h"
+#include "load_cell.h"
+#include "vibration.h"
+#include "audio_capture.h"
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -40,7 +43,20 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
         web_send_status();
     } else if (topicStr == statusTopic) {
         Serial.println("MQTT: Status requested");
-        // Status will be published by the caller after building JSON
+        web_send_status();
+    } else if (topicStr == buildTopic("tare")) {
+        load_cell_tare();
+        Serial.println("MQTT: Tare");
+        web_send_load();
+    } else if (topicStr == buildTopic("load")) {
+        Serial.println("MQTT: Load requested");
+        web_send_load();
+    } else if (topicStr == buildTopic("vibration")) {
+        vibration_start_capture();
+        Serial.println("MQTT: Vibration capture started");
+    } else if (topicStr == buildTopic("audio")) {
+        audio_start_capture();
+        Serial.println("MQTT: Audio capture started");
     }
 }
 
@@ -59,8 +75,12 @@ static void mqttConnect() {
         mqttClient.subscribe(buildTopic("arm").c_str());
         mqttClient.subscribe(buildTopic("stop").c_str());
         mqttClient.subscribe(buildTopic("status").c_str());
+        mqttClient.subscribe(buildTopic("tare").c_str());
+        mqttClient.subscribe(buildTopic("load").c_str());
+        mqttClient.subscribe(buildTopic("vibration").c_str());
+        mqttClient.subscribe(buildTopic("audio").c_str());
 
-        Serial.printf("MQTT: Subscribed to %s/{arm,stop,status}\n",
+        Serial.printf("MQTT: Subscribed to %s/{arm,stop,status,tare,load,vibration,audio}\n",
             (prefix + "/speed-cal/" + deviceName).c_str());
     } else {
         Serial.printf("MQTT: Connection failed, rc=%d\n", mqttClient.state());

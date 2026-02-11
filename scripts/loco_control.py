@@ -40,6 +40,9 @@ SENSOR_RESULT = SENSOR_PREFIX + "result"
 SENSOR_ARM = SENSOR_PREFIX + "arm"
 SENSOR_STOP = SENSOR_PREFIX + "stop"
 SENSOR_STATUS = SENSOR_PREFIX + "status"
+SENSOR_LOAD = SENSOR_PREFIX + "load"
+SENSOR_VIBRATION = SENSOR_PREFIX + "vibration"
+SENSOR_AUDIO = SENSOR_PREFIX + "audio"
 
 
 class LocoController:
@@ -87,6 +90,9 @@ class LocoController:
             client.subscribe(TOPIC_STATUS)
             client.subscribe(SENSOR_RESULT)
             client.subscribe(SENSOR_STATUS)
+            client.subscribe(SENSOR_LOAD)
+            client.subscribe(SENSOR_VIBRATION)
+            client.subscribe(SENSOR_AUDIO)
         else:
             print(f"Connection failed: rc={rc}")
 
@@ -134,6 +140,37 @@ class LocoController:
 
         elif topic == SENSOR_STATUS:
             pass  # sensor status updates are noisy
+
+        elif topic == SENSOR_LOAD:
+            try:
+                r = json.loads(payload)
+                grams = r.get("grams", "?")
+                tared = "tared" if r.get("tared") else "untared"
+                print(f"\n  Load cell: {grams} g ({tared})")
+            except json.JSONDecodeError:
+                print(f"[load] {payload}")
+
+        elif topic == SENSOR_VIBRATION:
+            try:
+                r = json.loads(payload)
+                pp = r.get("peak_to_peak", "?")
+                rms = r.get("rms", "?")
+                samples = r.get("samples", "?")
+                dur = r.get("duration_ms", "?")
+                print(f"\n  Vibration: p2p={pp}, rms={rms} ({samples} samples, {dur}ms)")
+            except json.JSONDecodeError:
+                print(f"[vibration] {payload}")
+
+        elif topic == SENSOR_AUDIO:
+            try:
+                r = json.loads(payload)
+                rms_db = r.get("rms_db", "?")
+                peak_db = r.get("peak_db", "?")
+                samples = r.get("samples", "?")
+                dur = r.get("duration_ms", "?")
+                print(f"\n  Audio: rms={rms_db} dB, peak={peak_db} dB ({samples} samples, {dur}ms)")
+            except json.JSONDecodeError:
+                print(f"[audio] {payload}")
 
     def _publish(self, topic_suffix, payload=""):
         """Publish to a throttle bridge topic."""
@@ -208,6 +245,26 @@ class LocoController:
         self.client.publish(SENSOR_STOP, "")
         print("Sensors disarmed")
 
+    def tare_load_cell(self):
+        """Tare (zero) the load cell."""
+        self.client.publish(SENSOR_PREFIX + "tare", "")
+        print("Load cell tare requested")
+
+    def read_load_cell(self):
+        """Request a load cell reading."""
+        self.client.publish(SENSOR_PREFIX + "load", "")
+        print("Load cell reading requested")
+
+    def capture_vibration(self):
+        """Start a vibration capture."""
+        self.client.publish(SENSOR_PREFIX + "vibration", "")
+        print("Vibration capture started")
+
+    def capture_audio(self):
+        """Start an audio capture."""
+        self.client.publish(SENSOR_PREFIX + "audio", "")
+        print("Audio capture started")
+
     # --- Compound operations ---
 
     def shuttle(self, speed_setting, runs=2, pause=3.0):
@@ -260,6 +317,10 @@ Commands:
 
   arm                 - Arm ESP32 sensors for speed measurement
   disarm              - Cancel sensor measurement
+  load                - Read load cell
+  tare                - Tare (zero) load cell
+  vibration           - Start vibration capture
+  audio               - Start audio capture
 
   shuttle SPD [N] [P] - Run back and forth (speed, runs, pause_secs)
 
@@ -365,6 +426,18 @@ def main():
 
             elif cmd == "disarm":
                 ctrl.stop_sensors()
+
+            elif cmd == "load":
+                ctrl.read_load_cell()
+
+            elif cmd == "tare":
+                ctrl.tare_load_cell()
+
+            elif cmd == "vibration":
+                ctrl.capture_vibration()
+
+            elif cmd == "audio":
+                ctrl.capture_audio()
 
             elif cmd == "shuttle":
                 spd = parse_speed(parts[1]) if len(parts) > 1 else 0.3
