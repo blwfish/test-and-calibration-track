@@ -4,6 +4,9 @@
 #include "speed_calc.h"
 #include "wifi_manager.h"
 #include "mqtt_manager.h"
+#include "load_cell.h"
+#include "vibration.h"
+#include "audio_capture.h"
 
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -46,6 +49,18 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                         web_send_status();
                     } else if (strcmp(action, "status") == 0) {
                         web_send_status();
+                    } else if (strcmp(action, "tare") == 0) {
+                        load_cell_tare();
+                        Serial.println("WS: Tared");
+                        web_send_load();
+                    } else if (strcmp(action, "vibration") == 0) {
+                        vibration_start_capture();
+                        Serial.println("WS: Vibration capture started");
+                    } else if (strcmp(action, "audio") == 0) {
+                        audio_start_capture();
+                        Serial.println("WS: Audio capture started");
+                    } else if (strcmp(action, "load") == 0) {
+                        web_send_load();
                     }
                 }
             }
@@ -138,6 +153,24 @@ void web_send_result() {
     mqtt_publish_result(json);
     // Also print to serial for debugging
     Serial.println(json);
+}
+
+void web_send_load() {
+    String json = load_cell_build_json();
+    ws.textAll(json);
+    mqtt_publish_load(json);
+}
+
+void web_send_vibration() {
+    String json = vibration_build_json();
+    ws.textAll(json);
+    mqtt_publish_vibration(json);
+}
+
+void web_send_audio() {
+    String json = audio_build_json();
+    ws.textAll(json);
+    mqtt_publish_audio(json);
 }
 
 void web_init() {
@@ -248,6 +281,35 @@ void web_init() {
     // REST API: sensor status
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", buildStatusJson());
+    });
+
+    // REST API: load cell reading
+    server.on("/api/load", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", load_cell_build_json());
+    });
+
+    // REST API: vibration - GET returns last result, POST starts capture
+    server.on("/api/vibration", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", vibration_build_json());
+    });
+    server.on("/api/vibration", HTTP_POST, [](AsyncWebServerRequest* req) {
+        vibration_start_capture();
+        req->send(200, "application/json", "{\"ok\":true,\"msg\":\"capture started\"}");
+    });
+
+    // REST API: audio - GET returns last result, POST starts capture
+    server.on("/api/audio", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", audio_build_json());
+    });
+    server.on("/api/audio", HTTP_POST, [](AsyncWebServerRequest* req) {
+        audio_start_capture();
+        req->send(200, "application/json", "{\"ok\":true,\"msg\":\"capture started\"}");
+    });
+
+    // REST API: tare load cell
+    server.on("/api/tare", HTTP_POST, [](AsyncWebServerRequest* req) {
+        load_cell_tare();
+        req->send(200, "application/json", "{\"ok\":true}");
     });
 
     // Captive portal redirects

@@ -93,6 +93,15 @@
   .log-entry { margin-bottom: 2px; }
   .log-entry.result { color: #4fc3f7; }
   .log-entry.error { color: #e94560; }
+  .reading-big {
+    text-align: center; font-size: 2em; font-weight: 700;
+    color: #66bb6a; margin: 8px 0 4px;
+  }
+  .reading-unit { text-align: center; color: #888; font-size: 0.85em; margin-bottom: 8px; }
+  .reading-row { display: flex; justify-content: space-around; text-align: center; margin: 8px 0; }
+  .reading-item { flex: 1; }
+  .reading-val { font-size: 1.3em; font-weight: 600; color: #4fc3f7; }
+  .reading-lbl { font-size: 0.75em; color: #888; }
 </style>
 </head>
 <body>
@@ -132,6 +141,63 @@
   <div style="margin-top:10px">
     <div class="result-detail">Interval speeds (mph):</div>
     <div class="intervals" id="intervalBars"></div>
+  </div>
+</div>
+
+<!-- Load Cell card -->
+<div class="card">
+  <h2>Load Cell</h2>
+  <div class="reading-big" id="loadValue">--</div>
+  <div class="reading-unit">grams (drawbar pull)</div>
+  <div class="status-row">
+    <span class="status-label">Raw ADC</span>
+    <span class="status-value" id="loadRaw">--</span>
+  </div>
+  <div class="status-row">
+    <span class="status-label">Tared</span>
+    <span class="status-value" id="loadTared">no</span>
+  </div>
+  <div class="btn-row">
+    <button class="btn-arm" onclick="sendCmd('tare')">Tare</button>
+    <button class="btn-disarm" onclick="sendCmd('load')">Read</button>
+  </div>
+</div>
+
+<!-- Vibration card -->
+<div class="card">
+  <h2>Vibration</h2>
+  <div class="reading-row">
+    <div class="reading-item">
+      <div class="reading-val" id="vibPP">--</div>
+      <div class="reading-lbl">Peak-to-Peak</div>
+    </div>
+    <div class="reading-item">
+      <div class="reading-val" id="vibRMS">--</div>
+      <div class="reading-lbl">RMS</div>
+    </div>
+  </div>
+  <div class="result-detail" id="vibInfo"></div>
+  <div class="btn-row">
+    <button class="btn-arm" onclick="sendCmd('vibration')">Capture</button>
+  </div>
+</div>
+
+<!-- Audio card -->
+<div class="card">
+  <h2>Audio</h2>
+  <div class="reading-row">
+    <div class="reading-item">
+      <div class="reading-val" id="audioRMS">--</div>
+      <div class="reading-lbl">RMS (dBFS)</div>
+    </div>
+    <div class="reading-item">
+      <div class="reading-val" id="audioPeak">--</div>
+      <div class="reading-lbl">Peak (dBFS)</div>
+    </div>
+  </div>
+  <div class="result-detail" id="audioInfo"></div>
+  <div class="btn-row">
+    <button class="btn-arm" onclick="sendCmd('audio')">Capture</button>
   </div>
 </div>
 
@@ -269,6 +335,23 @@ function handleMessage(msg) {
       showResult(d);
       log('Run: ' + (d.avg_speed_mph || '?') + ' mph ' + (d.direction || ''), 'result');
       updateState('complete');
+    } else if (d.type === 'load') {
+      document.getElementById('loadValue').textContent = d.grams || '--';
+      document.getElementById('loadRaw').textContent = d.raw || '--';
+      document.getElementById('loadTared').textContent = d.tared ? 'yes' : 'no';
+      log('Load: ' + (d.grams || '?') + ' g');
+    } else if (d.type === 'vibration') {
+      document.getElementById('vibPP').textContent = d.peak_to_peak || '--';
+      document.getElementById('vibRMS').textContent = d.rms || '--';
+      document.getElementById('vibInfo').textContent =
+        d.samples + ' samples / ' + d.duration_ms + ' ms';
+      log('Vibration: p2p=' + d.peak_to_peak + ' rms=' + d.rms);
+    } else if (d.type === 'audio') {
+      document.getElementById('audioRMS').textContent = d.rms_db || '--';
+      document.getElementById('audioPeak').textContent = d.peak_db || '--';
+      document.getElementById('audioInfo').textContent =
+        d.samples + ' samples / ' + d.duration_ms + ' ms';
+      log('Audio: rms=' + d.rms_db + ' dB, peak=' + d.peak_db + ' dB');
     }
   } catch(e) {
     log('Parse error: ' + e, 'error');

@@ -152,3 +152,21 @@ void mqtt_publish_error(const String& json) {
         mqttClient.publish(buildTopic("error").c_str(), json.c_str());
     }
 }
+
+void mqtt_publish_load(const String& json) {
+    if (mqttClient.connected()) {
+        mqttClient.publish(buildTopic("load").c_str(), json.c_str());
+    }
+}
+
+void mqtt_publish_vibration(const String& json) {
+    if (mqttClient.connected()) {
+        mqttClient.publish(buildTopic("vibration").c_str(), json.c_str());
+    }
+}
+
+void mqtt_publish_audio(const String& json) {
+    if (mqttClient.connected()) {
+        mqttClient.publish(buildTopic("audio").c_str(), json.c_str());
+    }
+}

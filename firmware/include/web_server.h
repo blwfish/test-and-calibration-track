@@ -11,3 +11,12 @@ void web_send_result();
 
 // Send current status to all connected WebSocket clients.
 void web_send_status();
+
+// Send load cell reading to WebSocket clients and MQTT.
+void web_send_load();
+
+// Send vibration analysis to WebSocket clients and MQTT.
+void web_send_vibration();
+
+// Send audio analysis to WebSocket clients and MQTT.
+void web_send_audio();

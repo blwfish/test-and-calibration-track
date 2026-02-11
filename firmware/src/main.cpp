@@ -7,6 +7,9 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "mqtt_manager.h"
+#include "load_cell.h"
+#include "vibration.h"
+#include "audio_capture.h"
 
 // Serial command buffer
 static char cmdBuf[32];
@@ -14,13 +17,17 @@ static int cmdLen = 0;
 
 static void printHelp() {
     Serial.println();
-    Serial.println("Speed Calibration Track - Phase 1 (4-sensor prototype)");
+    Serial.println("Speed Calibration Track v0.4");
     Serial.println("Commands:");
-    Serial.println("  arm     - Arm sensors for next pass");
-    Serial.println("  disarm  - Cancel active measurement");
-    Serial.println("  status  - Show current state");
-    Serial.println("  read    - Read raw sensor state");
-    Serial.println("  help    - Show this message");
+    Serial.println("  arm       - Arm sensors for next pass");
+    Serial.println("  disarm    - Cancel active measurement");
+    Serial.println("  status    - Show current state");
+    Serial.println("  read      - Read raw sensor state");
+    Serial.println("  load      - Read load cell (grams)");
+    Serial.println("  tare      - Tare (zero) load cell");
+    Serial.println("  vibration - Start vibration capture");
+    Serial.println("  audio     - Start audio capture");
+    Serial.println("  help      - Show this message");
     Serial.println();
 }
 
@@ -31,6 +38,13 @@ static void printStatus() {
         Serial.printf("Sensors triggered: %d / %d\n", r.sensorsTriggered, NUM_SENSORS);
     }
     Serial.printf("MQTT: %s\n", mqtt_is_connected() ? "connected" : "disconnected");
+    Serial.printf("Load cell: %s", load_cell_is_ready() ? "ready" : "not ready");
+    if (load_cell_is_ready()) {
+        Serial.printf(", %.1fg%s", load_cell_get_grams(), load_cell_is_tared() ? " (tared)" : "");
+    }
+    Serial.println();
+    Serial.printf("Vibration: %s\n", vibration_is_capturing() ? "capturing" : "idle");
+    Serial.printf("Audio: %s\n", audio_is_capturing() ? "capturing" : "idle");
 }
 
 static void readSensors() {
@@ -56,6 +70,22 @@ static void processCommand(const char* cmd) {
         printStatus();
     } else if (strcmp(cmd, "read") == 0) {
         readSensors();
+    } else if (strcmp(cmd, "load") == 0) {
+        if (load_cell_is_ready()) {
+            Serial.printf("Load: %.1f g (raw=%d%s)\n",
+                          load_cell_get_grams(), (int)load_cell_get_raw(),
+                          load_cell_is_tared() ? ", tared" : "");
+            web_send_load();
+        } else {
+            Serial.println("Load cell not ready (no HX711 data yet).");
+        }
+    } else if (strcmp(cmd, "tare") == 0) {
+        load_cell_tare();
+        web_send_load();
+    } else if (strcmp(cmd, "vibration") == 0) {
+        vibration_start_capture();
+    } else if (strcmp(cmd, "audio") == 0) {
+        audio_start_capture();
     } else if (strcmp(cmd, "help") == 0) {
         printHelp();
     } else if (strlen(cmd) > 0) {
@@ -69,7 +99,7 @@ void setup() {
 
     Serial.println();
     Serial.println("================================");
-    Serial.println("Speed Calibration Track v0.3");
+    Serial.println("Speed Calibration Track v0.4");
     Serial.printf("Sensors: %d @ %dmm spacing\n", NUM_SENSORS, (int)SENSOR_SPACING_MM);
     Serial.println("================================");
 
@@ -119,6 +149,11 @@ void setup() {
     // Start MQTT
     mqtt_init();
 
+    // Initialize sensor peripherals
+    load_cell_init();
+    vibration_init();
+    audio_init();
+
     // Start web server
     web_init();
 
@@ -133,6 +168,21 @@ void loop() {
 
     // MQTT housekeeping (reconnect, process incoming)
     mqtt_process();
+
+    // Sensor peripherals
+    load_cell_process();
+
+    bool vibWasCapturing = vibration_is_capturing();
+    vibration_process();
+    if (vibWasCapturing && !vibration_is_capturing()) {
+        web_send_vibration();
+    }
+
+    bool audioWasCapturing = audio_is_capturing();
+    audio_process();
+    if (audioWasCapturing && !audio_is_capturing()) {
+        web_send_audio();
+    }
 
     // Process serial commands
     while (Serial.available()) {

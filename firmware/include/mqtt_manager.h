@@ -32,3 +32,12 @@ void mqtt_publish_status(const String& json);
 
 // Publish an error (JSON) to {prefix}/speed-cal/{name}/error
 void mqtt_publish_error(const String& json);
+
+// Publish load cell reading (JSON) to {prefix}/speed-cal/{name}/load
+void mqtt_publish_load(const String& json);
+
+// Publish vibration analysis (JSON) to {prefix}/speed-cal/{name}/vibration
+void mqtt_publish_vibration(const String& json);
+
+// Publish audio analysis (JSON) to {prefix}/speed-cal/{name}/audio
+void mqtt_publish_audio(const String& json);

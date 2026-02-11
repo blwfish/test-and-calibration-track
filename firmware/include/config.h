@@ -63,5 +63,27 @@
 #define WS_PATH           "/ws"
 #define HTTP_PORT         80
 
+// --- HX711 Load Cell ---
+#define HX711_DOUT_PIN        16      // Data out from HX711
+#define HX711_SCK_PIN         17      // Clock to HX711
+#define LOAD_CELL_SAMPLE_MS   100     // Read interval (ms)
+#define LOAD_CELL_EMA_ALPHA   0.3f    // Smoothing factor (0-1, higher = less smoothing)
+#define LOAD_CELL_CAL_FACTOR  420.0f  // Raw units per gram (tune with known weight)
+
+// --- Piezo Vibration ---
+#define PIEZO_ADC_PIN         36      // ADC1_CH0 (VP), safe with WiFi
+#define VIBRATION_CAPTURE_MS  500     // Default capture window (ms)
+#define VIBRATION_SAMPLE_US   500     // Sample interval (~2kHz)
+#define VIBRATION_MAX_SAMPLES 1024    // Buffer size
+
+// --- INMP441 Audio ---
+#define I2S_SCK_PIN           18      // I2S bit clock
+#define I2S_WS_PIN            19      // I2S word select (L/R)
+#define I2S_SD_PIN            23      // I2S serial data (input)
+#define AUDIO_SAMPLE_RATE     16000   // 16kHz
+#define AUDIO_CAPTURE_MS      1000    // Default capture window (ms)
+#define AUDIO_DMA_BUF_COUNT   4       // Number of DMA buffers
+#define AUDIO_DMA_BUF_LEN     1024    // Samples per DMA buffer
+
 // --- Serial ---
 #define SERIAL_BAUD   115200
