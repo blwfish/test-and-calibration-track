@@ -39,7 +39,13 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
             cmd[copyLen] = '\0';
 
             JsonDocument doc;
-            if (deserializeJson(doc, cmd) == DeserializationError::Ok) {
+            DeserializationError jsonErr = deserializeJson(doc, cmd);
+            if (jsonErr != DeserializationError::Ok) {
+                Serial.printf("WS: JSON parse error: %s\n", jsonErr.c_str());
+                client->text("{\"type\":\"error\",\"error\":\"bad json\"}");
+                return;
+            }
+            {
                 const char* action = doc["action"];
                 if (action) {
                     // --- Sensor commands ---

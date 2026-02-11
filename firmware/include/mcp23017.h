@@ -13,7 +13,8 @@ bool mcp23017_init();
 uint8_t mcp23017_read_reg(uint8_t reg);
 
 // Write a single register on the MCP23017.
-void mcp23017_write_reg(uint8_t reg, uint8_t value);
+// Returns true on success, false on I2C error.
+bool mcp23017_write_reg(uint8_t reg, uint8_t value);
 
 // Read INTCAPA to find which pins triggered the interrupt and clear it.
 // Returns bitmask of pins that changed.

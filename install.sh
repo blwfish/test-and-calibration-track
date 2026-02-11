@@ -67,7 +67,7 @@ mkdir -p "${PREFIX}/jmri"
 
 # --- Install Python scripts ---
 echo "Installing Python scripts..."
-for f in calibrate_speed.py loco_control.py calibration_db.py; do
+for f in calibrate_speed.py loco_control.py calibration_db.py jmri_config.py decoder_volume.py audio_calibrate.py; do
     cp "${SCRIPT_DIR}/scripts/${f}" "${PREFIX}/scripts/"
     echo "  ${f}"
 done
@@ -80,7 +80,7 @@ echo "  jmri_throttle_bridge.py"
 # --- Install Python dependency ---
 echo ""
 echo "Installing Python dependencies..."
-python3 -m pip install --user --quiet paho-mqtt
+python3 -m pip install --user --quiet "paho-mqtt>=1.6,<3"
 echo "  paho-mqtt installed"
 
 # --- Verify import works ---

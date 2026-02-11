@@ -15,7 +15,7 @@ enum RunState {
 enum Direction {
     DIR_UNKNOWN = 0,
     DIR_A_TO_B = 1,   // Sensor 0 fired first
-    DIR_B_TO_A = -1   // Sensor N-1 fired first
+    DIR_B_TO_A = 2    // Sensor N-1 fired first
 };
 
 // Result of a single pass

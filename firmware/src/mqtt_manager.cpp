@@ -28,12 +28,18 @@ static String lastThrottleStatus = "";
 
 // Build a full sensor topic: {prefix}/speed-cal/{name}/{suffix}
 static String buildTopic(const char* suffix) {
-    return prefix + "/speed-cal/" + deviceName + "/" + suffix;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s/speed-cal/%s/%s",
+             prefix.c_str(), deviceName.c_str(), suffix);
+    return String(buf);
 }
 
 // Build a throttle bridge topic: {prefix}/speed-cal/throttle/{suffix}
 static String buildThrottleTopic(const char* suffix) {
-    return prefix + "/speed-cal/" THROTTLE_TOPIC_NAME "/" + suffix;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s/speed-cal/" THROTTLE_TOPIC_NAME "/%s",
+             prefix.c_str(), suffix);
+    return String(buf);
 }
 
 // Parse bridge status messages and update local throttle state
@@ -53,7 +59,7 @@ static void parseThrottleStatus(const String& status) {
         // "SPEED 0.500"
         int space = status.indexOf(' ');
         if (space > 0) {
-            throttleSpeed = status.substring(space + 1).toFloat();
+            throttleSpeed = constrain(status.substring(space + 1).toFloat(), 0.0f, 1.0f);
         }
     } else if (status == "FORWARD") {
         throttleForward = true;
@@ -110,6 +116,10 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
         unsigned int copyLen = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
         memcpy(buf, payload, copyLen);
         buf[copyLen] = '\0';
+        if (length >= sizeof(buf)) {
+            Serial.printf("MQTT: WARNING: throttle status truncated (%u -> %u bytes)\n",
+                          length, (unsigned int)(sizeof(buf) - 1));
+        }
         String status(buf);
 
         Serial.printf("MQTT: Bridge status: %s\n", status.c_str());
@@ -273,7 +283,7 @@ void mqtt_publish_track_mode(const String& json) {
 void mqtt_publish_throttle(const char* suffix, const String& payload) {
     if (mqttClient.connected()) {
         String topic = buildThrottleTopic(suffix);
-        mqttClient.publish(topic.c_str(), payload.c_str());
+        mqttClient.publish(topic.c_str(), payload.c_str(), false);  // retained=false
         Serial.printf("MQTT: Throttle %s: %s\n", suffix, payload.c_str());
     }
 }

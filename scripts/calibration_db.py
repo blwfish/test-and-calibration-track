@@ -244,19 +244,23 @@ class CalibrationDB:
 
     def set_audio_reference(self, roster_id: str, is_reference: bool = True):
         """Mark/unmark a loco as the audio reference."""
-        if is_reference:
-            # Clear any existing reference first
+        try:
+            if is_reference:
+                # Clear any existing reference first
+                self.conn.execute(
+                    "UPDATE locos SET is_audio_reference = 0, updated = ? "
+                    "WHERE is_audio_reference = 1",
+                    (self._now_iso(),)
+                )
             self.conn.execute(
-                "UPDATE locos SET is_audio_reference = 0, updated = ? "
-                "WHERE is_audio_reference = 1",
-                (self._now_iso(),)
+                "UPDATE locos SET is_audio_reference = ?, updated = ? "
+                "WHERE roster_id = ?",
+                (1 if is_reference else 0, self._now_iso(), roster_id)
             )
-        self.conn.execute(
-            "UPDATE locos SET is_audio_reference = ?, updated = ? "
-            "WHERE roster_id = ?",
-            (1 if is_reference else 0, self._now_iso(), roster_id)
-        )
-        self.conn.commit()
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_audio_reference(self) -> Optional[dict]:
         """Get the loco marked as audio reference, if any."""
@@ -287,28 +291,32 @@ class CalibrationDB:
 
         loco_id = loco["id"]
 
-        # Mark as consist
-        self.conn.execute(
-            "UPDATE locos SET is_consist = 1, updated = ? WHERE id = ?",
-            (self._now_iso(), loco_id)
-        )
-
-        # Replace existing members
-        self.conn.execute(
-            "DELETE FROM consist_members WHERE consist_loco_id = ?",
-            (loco_id,)
-        )
-
-        for m in members:
+        try:
+            # Mark as consist
             self.conn.execute(
-                "INSERT INTO consist_members "
-                "(consist_loco_id, member_roster_id, member_address, role, position, notes) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (loco_id, m.get("member_roster_id"), m["member_address"],
-                 m.get("role", "sound"), m.get("position", 0), m.get("notes"))
+                "UPDATE locos SET is_consist = 1, updated = ? WHERE id = ?",
+                (self._now_iso(), loco_id)
             )
 
-        self.conn.commit()
+            # Replace existing members
+            self.conn.execute(
+                "DELETE FROM consist_members WHERE consist_loco_id = ?",
+                (loco_id,)
+            )
+
+            for m in members:
+                self.conn.execute(
+                    "INSERT INTO consist_members "
+                    "(consist_loco_id, member_roster_id, member_address, role, position, notes) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (loco_id, m.get("member_roster_id"), m["member_address"],
+                     m.get("role", "sound"), m.get("position", 0), m.get("notes"))
+                )
+
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_consist_members(self, roster_id: str) -> list:
         """Get all members of a consist. Returns list of dicts, ordered by position."""

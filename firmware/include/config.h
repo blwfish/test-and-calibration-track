@@ -6,7 +6,10 @@
 // =============================================================================
 
 // --- Sensor array ---
-#define NUM_SENSORS           4       // Phase 1: 4 sensors (GPA0-GPA3)
+#define NUM_SENSORS           4       // Phase 1: 4 sensors; change to 16 for full PCB
+#if NUM_SENSORS > 16
+  #error "NUM_SENSORS cannot exceed 16 (MCP23017 limit: GPA0-7 + GPB0-7)"
+#endif
 #define SENSOR_SPACING_MM     100.0f  // Distance between adjacent sensors
 #define HO_SCALE_FACTOR       87.1f   // HO scale ratio
 
@@ -76,7 +79,7 @@
 #define PIEZO_ADC_PIN         36      // ADC1_CH0 (VP), safe with WiFi
 #define VIBRATION_CAPTURE_MS  500     // Default capture window (ms)
 #define VIBRATION_SAMPLE_US   500     // Sample interval (~2kHz)
-#define VIBRATION_MAX_SAMPLES 1024    // Buffer size
+#define VIBRATION_MAX_SAMPLES 1200    // Buffer size (headroom over 500ms/500us = 1000 samples)
 
 // --- INMP441 Audio ---
 #define I2S_SCK_PIN           18      // I2S bit clock

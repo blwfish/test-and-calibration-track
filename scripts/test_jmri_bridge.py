@@ -369,8 +369,10 @@ class TestLocoControllerProtocol(unittest.TestCase):
         t1.start()
         t2.start()
 
-        # Wait for both publishes
-        time.sleep(0.1)
+        # Wait for both publishes (poll instead of fixed sleep)
+        deadline = time.time() + 2.0
+        while len(self.published) < 2 and time.time() < deadline:
+            time.sleep(0.01)
 
         # Extract the request_ids from published messages
         self.assertEqual(len(self.published), 2)

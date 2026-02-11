@@ -269,8 +269,10 @@
       <span id="speedStep">0</span><span>/126</span>
       <span class="speed-pct" id="speedPct">(0%)</span>
     </div>
+    <label for="speedSlider" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Speed step</label>
     <input type="range" class="speed-slider" id="speedSlider"
            min="0" max="126" value="0" disabled
+           aria-label="Speed step"
            oninput="onSpeedInput(this.value)">
     <div class="speed-labels"><span>0</span><span>63</span><span>126</span></div>
   </div>
@@ -363,7 +365,7 @@
 
   <div class="pull-results hidden" id="pullResults">
     <table>
-      <thead><tr><th>Step</th><th>Throttle</th><th>Pull (g)</th><th>Vib P2P</th><th>Vib RMS</th><th>Aud RMS</th><th>Aud Peak</th></tr></thead>
+      <thead><tr><th scope="col">Step</th><th scope="col">Throttle</th><th scope="col">Pull (g)</th><th scope="col">Vib P2P</th><th scope="col">Vib RMS</th><th scope="col">Aud RMS</th><th scope="col">Aud Peak</th></tr></thead>
       <tbody id="pullResultsBody"></tbody>
     </table>
   </div>
@@ -575,7 +577,7 @@ function updateThrottleUI() {
 
 function doAcquire() {
   const addr = parseInt(document.getElementById('addrInput').value);
-  if (!addr || addr < 1) { log('Enter a valid DCC address', 'error'); return; }
+  if (!addr || addr < 1 || addr > 9999) { log('Enter a valid DCC address (1-9999)', 'error'); return; }
   sendJson({action: 'acquire', address: addr});
   log('Acquiring throttle for ' + addr + '...');
 }
@@ -698,11 +700,12 @@ function showPullResults(d) {
     d.entries.forEach(e => {
       const tr = document.createElement('tr');
       if (e.step === d.peak_step && d.complete) tr.className = 'peak';
-      tr.innerHTML = '<td>' + e.step + '</td><td>' + e.pct + '%</td><td>' + e.grams + '</td>' +
-        '<td>' + (e.vib_pp != null ? e.vib_pp : '--') + '</td>' +
-        '<td>' + (e.vib_rms != null ? e.vib_rms : '--') + '</td>' +
-        '<td>' + (e.aud_rms != null ? e.aud_rms : '--') + '</td>' +
-        '<td>' + (e.aud_peak != null ? e.aud_peak : '--') + '</td>';
+      [e.step, e.pct + '%', e.grams,
+       e.vib_pp != null ? e.vib_pp : '--',
+       e.vib_rms != null ? e.vib_rms : '--',
+       e.aud_rms != null ? e.aud_rms : '--',
+       e.aud_peak != null ? e.aud_peak : '--'
+      ].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
       tbody.appendChild(tr);
     });
   }
@@ -759,6 +762,7 @@ function showResult(d) {
 // --- Messages ---
 
 function handleMessage(msg) {
+  if (msg.length > 16384) { log('Message too large (' + msg.length + ' bytes), ignored', 'error'); return; }
   try {
     const d = JSON.parse(msg);
 

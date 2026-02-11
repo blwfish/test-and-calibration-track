@@ -71,7 +71,7 @@ This data enables:
 | Function | Pins | Notes |
 |----------|------|-------|
 | I2C bus (MCP23017) | SDA=GPIO 21, SCL=GPIO 22 | 400kHz, 4.7k external pullups |
-| MCP23017 INT | GPIO 4 | Interrupt on any sensor change — provides timestamp |
+| MCP23017 INT | GPIO 13 | Interrupt on any sensor change — provides timestamp |
 | HX711 load cell | GPIO 16 (DOUT), GPIO 17 (SCK) | Bit-banged protocol |
 | Piezo vibration sensor | GPIO 36 (VP) | ADC1 input (ADC2 conflicts with WiFi) |
 | INMP441 MEMS mic | GPIO 18 (SCK), 19 (WS), 23 (SD) | I2S0 input peripheral |
@@ -144,7 +144,7 @@ struct speed_cal_t {
 ### Detection Logic
 
 **Interrupt-driven timestamps via MCP23017:**
-- MCP23017 INTA/INTB pin triggers ESP32 hardware interrupt on GPIO 4
+- MCP23017 INTA/INTB pin triggers ESP32 hardware interrupt on GPIO 13
 - ISR records `micros()` timestamp and sets flag
 - Main loop reads MCP23017 over I2C to identify which sensor(s) changed
 - Timestamp is accurate to ISR latency (~1-2 us), not I2C read time
@@ -281,7 +281,7 @@ States: `idle`, `armed`, `measuring`, `complete`
     "scale_factor": 87.1,
     "sensor_count": 16,
     "mcp23017_addr": "0x20",
-    "mcp23017_int_pin": 4,
+    "mcp23017_int_pin": 13,
     "hx711_dout_pin": 16,
     "hx711_sck_pin": 17
   }
@@ -299,7 +299,7 @@ States: `idle`, `armed`, `measuring`, `complete`
   "scale_factor": 87.1,
   "sensor_count": 16,
   "mcp23017_addr": "0x20",
-  "mcp23017_int_pin": 4
+  "mcp23017_int_pin": 13
 }
 ```
 

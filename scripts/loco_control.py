@@ -19,10 +19,13 @@ Prerequisites:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
 import threading
+
+log = logging.getLogger(__name__)
 
 try:
     import paho.mqtt.client as mqtt
@@ -47,12 +50,16 @@ class LocoController:
 
         self.broker = broker
         self.port = port
-        self.connected = False
-        self.bridge_ready = False
         self.current_address = None
-        self.last_status = None
-        self.last_result = None
-        self.last_audio = None
+
+        # Thread-safe state (written from callback thread, read from main)
+        self._state_lock = threading.Lock()
+        self._connected = False
+        self._connect_event = threading.Event()
+        self._bridge_ready = False
+        self._last_status = None
+        self._last_result = None
+        self._last_audio = None
 
         # Build topic paths from configurable prefix
         self.prefix = prefix.rstrip("/")
@@ -72,21 +79,70 @@ class LocoController:
         self.client.on_message = self._on_message
         self.client.on_disconnect = self._on_disconnect
 
+    @property
+    def connected(self):
+        with self._state_lock:
+            return self._connected
+
+    @connected.setter
+    def connected(self, value):
+        with self._state_lock:
+            self._connected = value
+
+    @property
+    def bridge_ready(self):
+        with self._state_lock:
+            return self._bridge_ready
+
+    @bridge_ready.setter
+    def bridge_ready(self, value):
+        with self._state_lock:
+            self._bridge_ready = value
+
+    @property
+    def last_status(self):
+        with self._state_lock:
+            return self._last_status
+
+    @last_status.setter
+    def last_status(self, value):
+        with self._state_lock:
+            self._last_status = value
+
+    @property
+    def last_result(self):
+        with self._state_lock:
+            return self._last_result
+
+    @last_result.setter
+    def last_result(self, value):
+        with self._state_lock:
+            self._last_result = value
+
+    @property
+    def last_audio(self):
+        with self._state_lock:
+            return self._last_audio
+
+    @last_audio.setter
+    def last_audio(self, value):
+        with self._state_lock:
+            self._last_audio = value
+
     def connect(self):
         """Connect to the MQTT broker."""
-        print(f"Connecting to MQTT broker {self.broker}:{self.port}...")
+        log.info(f"Connecting to MQTT broker {self.broker}:{self.port}...")
+        self._connect_event.clear()
         try:
             self.client.connect(self.broker, self.port, keepalive=60)
             self.client.loop_start()
-            # Wait for connection
-            for _ in range(50):
-                if self.connected:
-                    return True
-                time.sleep(0.1)
-            print("ERROR: Connection timeout")
+            if self._connect_event.wait(timeout=5.0):
+                return True
+            log.error("Connection timeout")
+            self.client.loop_stop()
             return False
         except Exception as e:
-            print(f"ERROR: {e}")
+            log.error(f"{e}")
             return False
 
     def disconnect(self):
@@ -96,8 +152,10 @@ class LocoController:
 
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
-            self.connected = True
-            print("Connected to MQTT broker")
+            with self._state_lock:
+                self._connected = True
+            self._connect_event.set()
+            log.info("Connected to MQTT broker")
             # Subscribe to bridge status and sensor results
             client.subscribe(self.t_status)
             client.subscribe(self.t_sensor + "result")
@@ -110,32 +168,34 @@ class LocoController:
             client.subscribe(self.t_roster + "import_status")
             client.subscribe(self.t_cv + "result")
         else:
-            print(f"Connection failed: rc={rc}")
+            log.error(f"Connection failed: rc={rc}")
 
     def _on_disconnect(self, client, userdata, rc):
-        self.connected = False
+        with self._state_lock:
+            self._connected = False
         if rc != 0:
-            print("Disconnected unexpectedly")
+            log.warning("Disconnected unexpectedly")
 
     def _on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = msg.payload.decode("utf-8", errors="replace")
 
         if topic == self.t_status:
-            self.last_status = payload
+            self.last_status = payload  # uses thread-safe property setter
             if payload == "READY":
-                self.bridge_ready = True
-                print("[bridge] Ready")
+                with self._state_lock:
+                    self._bridge_ready = True
+                log.info("[bridge] Ready")
             elif payload.startswith("ACQUIRED"):
-                print(f"[bridge] {payload}")
+                log.info(f"[bridge] {payload}")
             elif payload.startswith("ERROR"):
-                print(f"[bridge] {payload}")
+                log.error(f"[bridge] {payload}")
             elif payload.startswith("SPEED"):
                 pass  # quiet on speed acks
             elif payload in ("FORWARD", "REVERSE", "STOPPED", "ESTOPPED"):
-                print(f"[bridge] {payload}")
+                log.info(f"[bridge] {payload}")
             else:
-                print(f"[bridge] {payload}")
+                log.info(f"[bridge] {payload}")
 
         elif topic == self.t_sensor + "result":
             self.last_result = payload
@@ -147,12 +207,12 @@ class LocoController:
                 duration = r.get("duration_ms", "?")
                 if isinstance(duration, (int, float)):
                     duration = f"{duration:.1f}"
-                print(f"\n  Result: {speed} scale mph, direction {direction}, "
-                      f"{sensors} sensors, {duration} ms")
+                log.info(f"Result: {speed} scale mph, direction {direction}, "
+                         f"{sensors} sensors, {duration} ms")
                 if "speeds_mph" in r:
-                    print(f"  Intervals: {r['speeds_mph']} mph")
+                    log.info(f"Intervals: {r['speeds_mph']} mph")
             except json.JSONDecodeError:
-                print(f"[sensor] {payload}")
+                log.info(f"[sensor] {payload}")
 
         elif topic == self.t_sensor + "status":
             pass  # sensor status updates are noisy
@@ -162,9 +222,9 @@ class LocoController:
                 r = json.loads(payload)
                 grams = r.get("grams", "?")
                 tared = "tared" if r.get("tared") else "untared"
-                print(f"\n  Load cell: {grams} g ({tared})")
+                log.info(f"Load cell: {grams} g ({tared})")
             except json.JSONDecodeError:
-                print(f"[load] {payload}")
+                log.info(f"[load] {payload}")
 
         elif topic == self.t_sensor + "vibration":
             try:
@@ -173,9 +233,9 @@ class LocoController:
                 rms = r.get("rms", "?")
                 samples = r.get("samples", "?")
                 dur = r.get("duration_ms", "?")
-                print(f"\n  Vibration: p2p={pp}, rms={rms} ({samples} samples, {dur}ms)")
+                log.info(f"Vibration: p2p={pp}, rms={rms} ({samples} samples, {dur}ms)")
             except json.JSONDecodeError:
-                print(f"[vibration] {payload}")
+                log.info(f"[vibration] {payload}")
 
         elif topic == self.t_sensor + "audio":
             self.last_audio = payload
@@ -185,9 +245,9 @@ class LocoController:
                 peak_db = r.get("peak_db", "?")
                 samples = r.get("samples", "?")
                 dur = r.get("duration_ms", "?")
-                print(f"\n  Audio: rms={rms_db} dB, peak={peak_db} dB ({samples} samples, {dur}ms)")
+                log.info(f"Audio: rms={rms_db} dB, peak={peak_db} dB ({samples} samples, {dur}ms)")
             except json.JSONDecodeError:
-                print(f"[audio] {payload}")
+                log.info(f"[audio] {payload}")
 
         elif topic in (self.t_roster + "info",
                        self.t_roster + "import_status",
@@ -199,13 +259,15 @@ class LocoController:
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
-            print(f"[response] bad JSON: {payload}")
+            log.warning(f"[response] bad JSON: {payload}")
             return
 
         request_id = data.get("request_id", "")
-        if request_id and request_id in self._pending:
-            self._pending[request_id]["result"] = data
-            self._pending[request_id]["event"].set()
+        with self._req_lock:
+            entry = self._pending.get(request_id)
+        if entry:
+            entry["result"] = data
+            entry["event"].set()
 
         # Also print for interactive use
         if topic == self.t_roster + "info":
@@ -219,18 +281,18 @@ class LocoController:
         if data.get("found"):
             for e in data.get("entries", []):
                 sp = "yes" if e.get("has_speed_profile") else "no"
-                print(f"\n  Roster: {e['roster_id']}, addr={e.get('address')}, "
-                      f"decoder={e.get('decoder_model', '?')}, "
-                      f"speed profile={sp}")
+                log.info(f"Roster: {e['roster_id']}, addr={e.get('address')}, "
+                         f"decoder={e.get('decoder_model', '?')}, "
+                         f"speed profile={sp}")
         else:
-            print(f"\n  Roster: {data.get('error', 'not found')}")
+            log.info(f"Roster: {data.get('error', 'not found')}")
 
     def _print_import_status(self, data):
         if data.get("success"):
-            print(f"\n  Import: {data.get('entries_imported', 0)} entries "
-                  f"imported to '{data.get('roster_id')}'")
+            log.info(f"Import: {data.get('entries_imported', 0)} entries "
+                     f"imported to '{data.get('roster_id')}'")
         else:
-            print(f"\n  Import failed: {data.get('error', 'unknown')}")
+            log.error(f"Import failed: {data.get('error', 'unknown')}")
 
     def _print_cv_result(self, data):
         op = data.get("operation", "?")
@@ -238,13 +300,13 @@ class LocoController:
         val = data.get("value", "?")
         status = data.get("status", "?")
         if op == "read":
-            print(f"\n  CV {cv} = {val} ({status})")
+            log.info(f"CV {cv} = {val} ({status})")
         elif op == "write":
-            print(f"\n  CV {cv} <- {val} ({status})")
+            log.info(f"CV {cv} <- {val} ({status})")
         elif op in ("read_batch_complete", "write_batch_complete"):
             results = data.get("results", [])
             ok = sum(1 for r in results if r.get("status") == "OK")
-            print(f"\n  Batch {op}: {ok}/{len(results)} OK")
+            log.info(f"Batch {op}: {ok}/{len(results)} OK")
 
     # --- Request-response helpers ---
 
@@ -256,9 +318,11 @@ class LocoController:
     def _wait_for_request(self, request_id, timeout=30.0):
         """Wait for a response matching request_id. Returns parsed JSON or None."""
         entry = {"event": threading.Event(), "result": None}
-        self._pending[request_id] = entry
+        with self._req_lock:
+            self._pending[request_id] = entry
         entry["event"].wait(timeout=timeout)
-        self._pending.pop(request_id, None)
+        with self._req_lock:
+            self._pending.pop(request_id, None)
         return entry["result"]
 
     # --- Throttle commands ---
@@ -289,7 +353,7 @@ class LocoController:
             self.current_address = address
             return True
         else:
-            print("ERROR: throttle acquire timeout or failure")
+            log.error("Throttle acquire timeout or failure")
             return False
 
     def speed(self, value):
@@ -327,32 +391,32 @@ class LocoController:
         """Arm the ESP32 sensors for a speed measurement."""
         self.last_result = None
         self.client.publish(self.t_sensor + "arm", "")
-        print("Sensors armed")
+        log.info("Sensors armed")
 
     def stop_sensors(self):
         """Cancel sensor measurement."""
         self.client.publish(self.t_sensor + "stop", "")
-        print("Sensors disarmed")
+        log.info("Sensors disarmed")
 
     def tare_load_cell(self):
         """Tare (zero) the load cell."""
         self.client.publish(self.t_sensor + "tare", "")
-        print("Load cell tare requested")
+        log.info("Load cell tare requested")
 
     def read_load_cell(self):
         """Request a load cell reading."""
         self.client.publish(self.t_sensor + "load", "")
-        print("Load cell reading requested")
+        log.info("Load cell reading requested")
 
     def capture_vibration(self):
         """Start a vibration capture."""
         self.client.publish(self.t_sensor + "vibration", "")
-        print("Vibration capture started")
+        log.info("Vibration capture started")
 
     def capture_audio(self):
         """Start an audio capture."""
         self.client.publish(self.t_sensor + "audio", "")
-        print("Audio capture started")
+        log.info("Audio capture started")
 
     def wait_for_audio(self, timeout=5.0):
         """Request audio capture and wait for result.
@@ -445,8 +509,8 @@ class LocoController:
         runs: number of direction changes
         pause: seconds between direction changes
         """
-        print(f"\nShuttle: speed={speed_setting}, runs={runs}, pause={pause}s")
-        print("Press Ctrl+C to stop\n")
+        log.info(f"Shuttle: speed={speed_setting}, runs={runs}, pause={pause}s")
+        log.info("Press Ctrl+C to stop")
 
         try:
             self.forward()
@@ -466,11 +530,11 @@ class LocoController:
 
             time.sleep(pause)
             self.stop()
-            print("Shuttle complete")
+            log.info("Shuttle complete")
 
         except KeyboardInterrupt:
             self.stop()
-            print("\nStopped")
+            log.info("Stopped")
 
 
 def print_help():
@@ -509,10 +573,11 @@ Commands:
 def parse_speed(value_str):
     """Parse a speed value. If integer 1-126, convert to 0.0-1.0 range."""
     val = float(value_str)
-    if val > 1.0:
+    if val < 0.0:
+        val = 0.0
+    elif val > 1.0:
         # Treat as speed step (1-126) -> convert to 0.0-1.0
-        val = val / 126.0
-        val = min(1.0, val)
+        val = min(val / 126.0, 1.0)
     return val
 
 
@@ -522,14 +587,14 @@ def resolve_mqtt_args(args):
     if jmri:
         if args.broker is None:
             args.broker = jmri.broker
-            print(f"Auto-detected MQTT broker from JMRI: {jmri.broker}")
+            log.info(f"Auto-detected MQTT broker from JMRI: {jmri.broker}")
         if args.port is None:
             args.port = jmri.port
         if args.prefix is None and jmri.channel:
             args.prefix = jmri.channel + "/speed-cal"
-            print(f"Auto-detected MQTT prefix from JMRI: {args.prefix}")
+            log.info(f"Auto-detected MQTT prefix from JMRI: {args.prefix}")
     elif args.broker is None or args.port is None:
-        print("No JMRI MQTT config found; using defaults")
+        log.info("No JMRI MQTT config found; using defaults")
 
     # Apply defaults for anything still unset
     if args.broker is None:
@@ -555,6 +620,8 @@ def main():
     parser.add_argument("--address", type=int, default=None,
                         help="DCC address to acquire on startup")
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     resolve_mqtt_args(args)
 

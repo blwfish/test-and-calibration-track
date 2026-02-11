@@ -2,6 +2,7 @@
 #include "config.h"
 
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 // --- HX711 state ---
 static int32_t rawValue = 0;
@@ -10,6 +11,9 @@ static int32_t tareOffset = 0;
 static bool tared = false;
 static bool ready = false;
 static unsigned long lastReadMs = 0;
+static uint32_t notReadyCount = 0;
+static const uint32_t HX711_TIMEOUT_POLLS = 50;  // ~5s at 100ms sample interval
+static float calFactor = LOAD_CELL_CAL_FACTOR;    // Loaded from NVS, falls back to config.h
 
 // --- HX711 bit-bang protocol ---
 
@@ -72,8 +76,15 @@ void load_cell_init() {
     pinMode(HX711_SCK_PIN, OUTPUT);
     digitalWrite(HX711_SCK_PIN, LOW);
 
+    // Load calibration factor from NVS (falls back to LOAD_CELL_CAL_FACTOR)
+    Preferences prefs;
+    prefs.begin("loadcell", true);
+    calFactor = prefs.getFloat("cal", LOAD_CELL_CAL_FACTOR);
+    prefs.end();
+
     Serial.println("HX711 load cell initialized.");
-    Serial.printf("  DOUT=GPIO%d, SCK=GPIO%d\n", HX711_DOUT_PIN, HX711_SCK_PIN);
+    Serial.printf("  DOUT=GPIO%d, SCK=GPIO%d, cal=%.1f\n",
+                  HX711_DOUT_PIN, HX711_SCK_PIN, calFactor);
 }
 
 void load_cell_process() {
@@ -85,8 +96,13 @@ void load_cell_process() {
 
     int32_t raw;
     if (!hx711_read_raw(raw)) {
+        notReadyCount++;
+        if (notReadyCount == HX711_TIMEOUT_POLLS) {
+            Serial.println("HX711: WARNING: not responding (DOUT stuck HIGH). Check wiring.");
+        }
         return;  // HX711 not ready yet
     }
+    notReadyCount = 0;
 
     rawValue = raw;
 
@@ -110,7 +126,7 @@ void load_cell_tare() {
 }
 
 float load_cell_get_grams() {
-    return load_cell_raw_to_grams((int32_t)smoothedRaw, tareOffset, LOAD_CELL_CAL_FACTOR);
+    return load_cell_raw_to_grams((int32_t)smoothedRaw, tareOffset, calFactor);
 }
 
 int32_t load_cell_get_raw() {
