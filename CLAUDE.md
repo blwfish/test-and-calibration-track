@@ -19,11 +19,13 @@ firmware/           PlatformIO project (ESP32, Arduino framework)
     test_audio/       Audio dB conversion tests (11 cases)
 docs/               Specifications and design documents
 scripts/            JMRI bridge and orchestration scripts
-  jmri_throttle_bridge.py   Jython script for JMRI (MQTT→DCC throttle)
-  loco_control.py           Python CLI for loco control and testing
-  calibrate_speed.py        Automated speed calibration sweep
+  jmri_throttle_bridge.py   Jython script for JMRI (MQTT→DCC throttle + roster + CV)
+  loco_control.py           Python CLI for loco control, roster queries, CV programming
+  calibrate_speed.py        Automated speed calibration sweep with JMRI auto-import
   calibration_db.py         SQLite database for calibration data
+  jmri_config.py            Auto-detect MQTT broker/prefix from JMRI profile XML
   test_calibration_db.py    Tests for calibration_db (34 cases)
+  test_jmri_bridge.py       Tests for JMRI bridge protocol + config reader (21 cases)
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket STL/STEP files
@@ -112,6 +114,18 @@ Configurable via web UI at `/api/mqtt` or NVS.
 | `/cova/speed-cal/throttle/release` | to JMRI | Release throttle |
 | `/cova/speed-cal/throttle/status` | from JMRI | Status/ack messages |
 
+### JMRI Roster & CV Topics
+
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `/cova/speed-cal/roster/query` | to JMRI | Query roster: JSON `{"roster_id"}` or `{"address"}` |
+| `/cova/speed-cal/roster/info` | from JMRI | Roster query result: JSON with entries |
+| `/cova/speed-cal/roster/import_profile` | to JMRI | Import speed profile: JSON with speed entries |
+| `/cova/speed-cal/roster/import_status` | from JMRI | Import result: JSON `{"success", "entries_imported"}` |
+| `/cova/speed-cal/cv/read` | to JMRI | Read CV: JSON `{"cv": N}` or `{"cvs": [...]}` |
+| `/cova/speed-cal/cv/write` | to JMRI | Write CV: JSON `{"cv": N, "value": V}` |
+| `/cova/speed-cal/cv/result` | from JMRI | CV result: JSON `{"cv", "value", "status"}` |
+
 ## Key Design Decisions
 
 - **MCP23017 for sensors** rather than direct GPIO: frees pin budget for HX711,
@@ -142,27 +156,34 @@ Requires JMRI with two connections configured:
 2. **MQTT** — same Mosquitto broker as ESP32, blank channel prefix
 
 Run `scripts/jmri_throttle_bridge.py` inside JMRI (Scripting > Run Script).
-It subscribes to MQTT command topics and translates to DCC throttle calls.
+It subscribes to MQTT command topics and translates to DCC throttle calls,
+roster queries, speed profile imports, and CV read/write operations.
 
 ## Orchestration
+
+MQTT broker address, port, and topic prefix are auto-detected from the JMRI
+profile XML (`~/.jmri/...profile.xml`). CLI flags `--broker`, `--port`,
+`--prefix` override auto-detection.
 
 `scripts/loco_control.py` — interactive CLI for testing:
 ```bash
 pip3 install paho-mqtt
-python3 scripts/loco_control.py --broker 192.168.68.250 --address 3
+python3 scripts/loco_control.py --address 3
+python3 scripts/loco_control.py --broker 192.168.68.250 --address 3  # manual override
 ```
 
 `scripts/calibrate_speed.py` — automated calibration sweep:
 ```bash
-python3 scripts/calibrate_speed.py --address 3 --broker 192.168.68.250
 python3 scripts/calibrate_speed.py --address 3 --roster-id "SP 4449"
 python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
+python3 scripts/calibrate_speed.py --address 3 --no-import-profile  # skip JMRI import
 ```
 1. Binary search for start-of-motion threshold (forward & reverse)
 2. Sweep speed steps with multi-pass averaging at low speeds
 3. Output calibration JSON to `calibration-data/`
 4. Store results in SQLite database (`calibration-data/calibration.db`)
-5. Shuttle track: alternates direction each pass
+5. Auto-import speed profile into JMRI roster (when `--roster-id` given)
+6. Shuttle track: alternates direction each pass
 
 ## Calibration Database
 
@@ -193,7 +214,11 @@ db.set_consist("VGN Triplex", [
 db.add_audio_adjustment(run_id, ref_run_id, delta_db=2.5, member_address=101)
 ```
 
-Run tests: `python3 scripts/test_calibration_db.py`
+Run tests:
+```bash
+python3 scripts/test_calibration_db.py   # 34 calibration DB tests
+python3 scripts/test_jmri_bridge.py      # 21 JMRI bridge/config tests
+```
 
 ## Related Projects
 
@@ -213,11 +238,11 @@ Run tests: `python3 scripts/test_calibration_db.py`
 - [x] Phase 6c: Calibration database (SQLite) — stores all measurement data keyed by roster ID
 - [x] Phase 6d: Consist support — multi-decoder locos, per-member audio adjustments, schema v2
 - [x] Phase 6e: Track safety switches — layout/prog + DCC/DC sensing, interlocks, web UI
-- [ ] Phase 7: JMRI roster integration (speed profile import, CV read/write bridge)
+- [x] Phase 7: JMRI roster integration — roster query, speed profile import, CV read/write over MQTT
 - [ ] Phase 7b: Audio calibration (reference profiles, volume CV computation)
 - [ ] Phase 8: Fleet calibration
 
-### Current Status (v0.5)
+### Current Status (v0.6)
 - Firmware v0.5 running on ESP32 WROOM-32
 - MCP23017 at 0x27 responding, interrupt-driven detection working
 - WiFi AP+STA mode with captive portal and NVS credential storage
@@ -234,11 +259,18 @@ Run tests: `python3 scripts/test_calibration_db.py`
   - Three derived modes: LAYOUT, PROG_DCC, PROG_DC with safety interlocks
   - Web UI track mode badge, warning banners, button disabling
   - NVS-persistent enable/disable (bypasses all interlocks when switches not installed)
+- JMRI roster integration (Phase 7):
+  - Roster query via MQTT (by roster ID or DCC address, returns decoder info)
+  - Speed profile import via MQTT (calibration results → JMRI RosterSpeedProfile)
+  - CV read/write via MQTT (service mode, single + batch, with status feedback)
+  - Auto-import after calibration sweep (when --roster-id given)
+  - Auto-detect MQTT broker/port/prefix from JMRI profile XML
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
-- 34 Python tests passing (calibration_db: locos, runs, entries, consists, audio adjustments)
-- JMRI Jython throttle bridge script ready
-- Python loco control CLI with sensor commands
-- Automated calibration script with dry-run mode, stores results in SQLite + JSON
+- 55 Python tests passing (calibration_db: 34, jmri_bridge: 21)
+- JMRI Jython throttle bridge with roster, CV, and speed profile import handlers
+- Python loco control CLI with sensor, roster, and CV commands
+- Automated calibration script with dry-run mode, JMRI auto-import, stores results in SQLite + JSON
 - Calibration database (schema v2) with locos, consist_members, runs, speed_entries, motion_thresholds, audio_adjustments
 - Calibration track replaces programming track (SPROG program track output)
+- Install script for deploying to layout system (`install.sh`)
 - Waiting for TCRT5000 LM393 breakout boards + HX711 + piezo + INMP441

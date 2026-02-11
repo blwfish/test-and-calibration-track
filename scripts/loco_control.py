@@ -19,6 +19,7 @@ Prerequisites:
 
 import argparse
 import json
+import os
 import sys
 import time
 import threading
@@ -26,27 +27,24 @@ import threading
 try:
     import paho.mqtt.client as mqtt
 except ImportError:
-    print("ERROR: paho-mqtt not installed. Run: pip3 install paho-mqtt")
-    sys.exit(1)
+    mqtt = None
+
+# Import sibling module
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from jmri_config import read_mqtt_config
 
 
-# --- MQTT Topics ---
-TOPIC_PREFIX = "/cova/speed-cal/throttle/"
-TOPIC_STATUS = TOPIC_PREFIX + "status"
-
-# ESP32 sensor topics
-SENSOR_PREFIX = "/cova/speed-cal/speed-cal/"
-SENSOR_RESULT = SENSOR_PREFIX + "result"
-SENSOR_ARM = SENSOR_PREFIX + "arm"
-SENSOR_STOP = SENSOR_PREFIX + "stop"
-SENSOR_STATUS = SENSOR_PREFIX + "status"
-SENSOR_LOAD = SENSOR_PREFIX + "load"
-SENSOR_VIBRATION = SENSOR_PREFIX + "vibration"
-SENSOR_AUDIO = SENSOR_PREFIX + "audio"
+# --- Default MQTT settings (used when JMRI config not found) ---
+DEFAULT_BROKER = "192.168.68.250"
+DEFAULT_PORT = 1883
+DEFAULT_PREFIX = "/cova/speed-cal"
 
 
 class LocoController:
-    def __init__(self, broker, port=1883):
+    def __init__(self, broker, port=1883, prefix=DEFAULT_PREFIX):
+        if mqtt is None:
+            raise ImportError("paho-mqtt not installed. Run: pip3 install paho-mqtt")
+
         self.broker = broker
         self.port = port
         self.connected = False
@@ -54,6 +52,19 @@ class LocoController:
         self.current_address = None
         self.last_status = None
         self.last_result = None
+
+        # Build topic paths from configurable prefix
+        self.prefix = prefix.rstrip("/")
+        self.t_throttle = self.prefix + "/throttle/"
+        self.t_status = self.t_throttle + "status"
+        self.t_sensor = self.prefix + "/speed-cal/"
+        self.t_roster = self.prefix + "/roster/"
+        self.t_cv = self.prefix + "/cv/"
+
+        # Request-response correlation
+        self._pending = {}  # request_id -> {"event": Event, "result": dict}
+        self._req_counter = 0
+        self._req_lock = threading.Lock()
 
         self.client = mqtt.Client(client_id="loco-control-cli")
         self.client.on_connect = self._on_connect
@@ -87,12 +98,16 @@ class LocoController:
             self.connected = True
             print("Connected to MQTT broker")
             # Subscribe to bridge status and sensor results
-            client.subscribe(TOPIC_STATUS)
-            client.subscribe(SENSOR_RESULT)
-            client.subscribe(SENSOR_STATUS)
-            client.subscribe(SENSOR_LOAD)
-            client.subscribe(SENSOR_VIBRATION)
-            client.subscribe(SENSOR_AUDIO)
+            client.subscribe(self.t_status)
+            client.subscribe(self.t_sensor + "result")
+            client.subscribe(self.t_sensor + "status")
+            client.subscribe(self.t_sensor + "load")
+            client.subscribe(self.t_sensor + "vibration")
+            client.subscribe(self.t_sensor + "audio")
+            # Subscribe to roster and CV responses
+            client.subscribe(self.t_roster + "info")
+            client.subscribe(self.t_roster + "import_status")
+            client.subscribe(self.t_cv + "result")
         else:
             print(f"Connection failed: rc={rc}")
 
@@ -105,7 +120,7 @@ class LocoController:
         topic = msg.topic
         payload = msg.payload.decode("utf-8", errors="replace")
 
-        if topic == TOPIC_STATUS:
+        if topic == self.t_status:
             self.last_status = payload
             if payload == "READY":
                 self.bridge_ready = True
@@ -121,7 +136,7 @@ class LocoController:
             else:
                 print(f"[bridge] {payload}")
 
-        elif topic == SENSOR_RESULT:
+        elif topic == self.t_sensor + "result":
             self.last_result = payload
             try:
                 r = json.loads(payload)
@@ -138,10 +153,10 @@ class LocoController:
             except json.JSONDecodeError:
                 print(f"[sensor] {payload}")
 
-        elif topic == SENSOR_STATUS:
+        elif topic == self.t_sensor + "status":
             pass  # sensor status updates are noisy
 
-        elif topic == SENSOR_LOAD:
+        elif topic == self.t_sensor + "load":
             try:
                 r = json.loads(payload)
                 grams = r.get("grams", "?")
@@ -150,7 +165,7 @@ class LocoController:
             except json.JSONDecodeError:
                 print(f"[load] {payload}")
 
-        elif topic == SENSOR_VIBRATION:
+        elif topic == self.t_sensor + "vibration":
             try:
                 r = json.loads(payload)
                 pp = r.get("peak_to_peak", "?")
@@ -161,7 +176,7 @@ class LocoController:
             except json.JSONDecodeError:
                 print(f"[vibration] {payload}")
 
-        elif topic == SENSOR_AUDIO:
+        elif topic == self.t_sensor + "audio":
             try:
                 r = json.loads(payload)
                 rms_db = r.get("rms_db", "?")
@@ -172,9 +187,83 @@ class LocoController:
             except json.JSONDecodeError:
                 print(f"[audio] {payload}")
 
+        elif topic in (self.t_roster + "info",
+                       self.t_roster + "import_status",
+                       self.t_cv + "result"):
+            self._handle_response(topic, payload)
+
+    def _handle_response(self, topic, payload):
+        """Route a JSON response to the waiting request by request_id."""
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            print(f"[response] bad JSON: {payload}")
+            return
+
+        request_id = data.get("request_id", "")
+        if request_id and request_id in self._pending:
+            self._pending[request_id]["result"] = data
+            self._pending[request_id]["event"].set()
+
+        # Also print for interactive use
+        if topic == self.t_roster + "info":
+            self._print_roster_info(data)
+        elif topic == self.t_roster + "import_status":
+            self._print_import_status(data)
+        elif topic == self.t_cv + "result":
+            self._print_cv_result(data)
+
+    def _print_roster_info(self, data):
+        if data.get("found"):
+            for e in data.get("entries", []):
+                sp = "yes" if e.get("has_speed_profile") else "no"
+                print(f"\n  Roster: {e['roster_id']}, addr={e.get('address')}, "
+                      f"decoder={e.get('decoder_model', '?')}, "
+                      f"speed profile={sp}")
+        else:
+            print(f"\n  Roster: {data.get('error', 'not found')}")
+
+    def _print_import_status(self, data):
+        if data.get("success"):
+            print(f"\n  Import: {data.get('entries_imported', 0)} entries "
+                  f"imported to '{data.get('roster_id')}'")
+        else:
+            print(f"\n  Import failed: {data.get('error', 'unknown')}")
+
+    def _print_cv_result(self, data):
+        op = data.get("operation", "?")
+        cv = data.get("cv", "?")
+        val = data.get("value", "?")
+        status = data.get("status", "?")
+        if op == "read":
+            print(f"\n  CV {cv} = {val} ({status})")
+        elif op == "write":
+            print(f"\n  CV {cv} <- {val} ({status})")
+        elif op in ("read_batch_complete", "write_batch_complete"):
+            results = data.get("results", [])
+            ok = sum(1 for r in results if r.get("status") == "OK")
+            print(f"\n  Batch {op}: {ok}/{len(results)} OK")
+
+    # --- Request-response helpers ---
+
+    def _next_request_id(self, prefix="req"):
+        with self._req_lock:
+            self._req_counter += 1
+            return f"{prefix}-{self._req_counter}"
+
+    def _wait_for_request(self, request_id, timeout=30.0):
+        """Wait for a response matching request_id. Returns parsed JSON or None."""
+        entry = {"event": threading.Event(), "result": None}
+        self._pending[request_id] = entry
+        entry["event"].wait(timeout=timeout)
+        self._pending.pop(request_id, None)
+        return entry["result"]
+
+    # --- Throttle commands ---
+
     def _publish(self, topic_suffix, payload=""):
         """Publish to a throttle bridge topic."""
-        topic = TOPIC_PREFIX + topic_suffix
+        topic = self.t_throttle + topic_suffix
         self.client.publish(topic, payload)
 
     def _wait_status(self, prefix, timeout=5.0):
@@ -186,8 +275,6 @@ class LocoController:
                 return self.last_status
             time.sleep(0.05)
         return None
-
-    # --- Throttle commands ---
 
     def acquire(self, address, long_addr=None):
         """Acquire a throttle for the given DCC address."""
@@ -237,33 +324,98 @@ class LocoController:
     def arm_sensors(self):
         """Arm the ESP32 sensors for a speed measurement."""
         self.last_result = None
-        self.client.publish(SENSOR_ARM, "")
+        self.client.publish(self.t_sensor + "arm", "")
         print("Sensors armed")
 
     def stop_sensors(self):
         """Cancel sensor measurement."""
-        self.client.publish(SENSOR_STOP, "")
+        self.client.publish(self.t_sensor + "stop", "")
         print("Sensors disarmed")
 
     def tare_load_cell(self):
         """Tare (zero) the load cell."""
-        self.client.publish(SENSOR_PREFIX + "tare", "")
+        self.client.publish(self.t_sensor + "tare", "")
         print("Load cell tare requested")
 
     def read_load_cell(self):
         """Request a load cell reading."""
-        self.client.publish(SENSOR_PREFIX + "load", "")
+        self.client.publish(self.t_sensor + "load", "")
         print("Load cell reading requested")
 
     def capture_vibration(self):
         """Start a vibration capture."""
-        self.client.publish(SENSOR_PREFIX + "vibration", "")
+        self.client.publish(self.t_sensor + "vibration", "")
         print("Vibration capture started")
 
     def capture_audio(self):
         """Start an audio capture."""
-        self.client.publish(SENSOR_PREFIX + "audio", "")
+        self.client.publish(self.t_sensor + "audio", "")
         print("Audio capture started")
+
+    # --- Roster commands ---
+
+    def query_roster(self, roster_id=None, address=None, timeout=10.0):
+        """Query JMRI roster by roster_id or address. Returns parsed response or None."""
+        request_id = self._next_request_id("rq")
+        payload = {"request_id": request_id}
+        if roster_id:
+            payload["roster_id"] = roster_id
+        elif address is not None:
+            payload["address"] = address
+        self.client.publish(self.t_roster + "query", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
+
+    def import_speed_profile(self, roster_id, entries, scale_factor=87.1,
+                             clear_existing=True, timeout=30.0):
+        """Import speed profile into a JMRI roster entry.
+
+        entries: list of {"speed_step": int, "speed_mph": float, "direction": str}
+        Returns parsed response or None on timeout.
+        """
+        request_id = self._next_request_id("imp")
+        payload = {
+            "request_id": request_id,
+            "roster_id": roster_id,
+            "scale_factor": scale_factor,
+            "clear_existing": clear_existing,
+            "entries": entries,
+        }
+        self.client.publish(self.t_roster + "import_profile", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
+
+    # --- CV commands ---
+
+    def read_cv(self, cv, timeout=30.0):
+        """Read a single CV. Returns {"cv", "value", "status"} or None."""
+        request_id = self._next_request_id("cvr")
+        payload = {"request_id": request_id, "cv": cv}
+        self.client.publish(self.t_cv + "read", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
+
+    def read_cvs(self, cvs, timeout=None):
+        """Read multiple CVs. Returns batch result or None."""
+        if timeout is None:
+            timeout = len(cvs) * 30.0
+        request_id = self._next_request_id("cvr")
+        payload = {"request_id": request_id, "cvs": cvs}
+        self.client.publish(self.t_cv + "read", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
+
+    def write_cv(self, cv, value, timeout=30.0):
+        """Write a single CV. Returns result dict or None."""
+        request_id = self._next_request_id("cvw")
+        payload = {"request_id": request_id, "cv": cv, "value": value}
+        self.client.publish(self.t_cv + "write", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
+
+    def write_cvs(self, writes, timeout=None):
+        """Write multiple CVs. writes: [{"cv": N, "value": V}, ...]. Returns batch result or None."""
+        if timeout is None:
+            timeout = len(writes) * 30.0
+        request_id = self._next_request_id("cvw")
+        payload = {"request_id": request_id, "writes": writes}
+        self.client.publish(self.t_cv + "write", json.dumps(payload))
+        return self._wait_for_request(request_id, timeout=timeout)
 
     # --- Compound operations ---
 
@@ -322,6 +474,11 @@ Commands:
   vibration           - Start vibration capture
   audio               - Start audio capture
 
+  roster ID           - Query JMRI roster entry by ID
+  roster-addr ADDR    - Query JMRI roster entry by DCC address
+  cv-read CV          - Read a decoder CV
+  cv-write CV VALUE   - Write a decoder CV
+
   shuttle SPD [N] [P] - Run back and forth (speed, runs, pause_secs)
 
   status              - Show current state
@@ -340,17 +497,49 @@ def parse_speed(value_str):
     return val
 
 
+def resolve_mqtt_args(args):
+    """Fill in broker/port/prefix from JMRI config if not given on CLI."""
+    jmri = read_mqtt_config()
+    if jmri:
+        if args.broker is None:
+            args.broker = jmri.broker
+            print(f"Auto-detected MQTT broker from JMRI: {jmri.broker}")
+        if args.port is None:
+            args.port = jmri.port
+        if args.prefix is None and jmri.channel:
+            args.prefix = jmri.channel + "/speed-cal"
+            print(f"Auto-detected MQTT prefix from JMRI: {args.prefix}")
+    elif args.broker is None or args.port is None:
+        print("No JMRI MQTT config found; using defaults")
+
+    # Apply defaults for anything still unset
+    if args.broker is None:
+        args.broker = DEFAULT_BROKER
+    if args.port is None:
+        args.port = DEFAULT_PORT
+    if args.prefix is None:
+        args.prefix = DEFAULT_PREFIX
+
+
 def main():
+    if mqtt is None:
+        print("ERROR: paho-mqtt not installed. Run: pip3 install paho-mqtt")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="Locomotive Control CLI")
-    parser.add_argument("--broker", default="192.168.68.250",
-                        help="MQTT broker address (default: 192.168.68.250)")
-    parser.add_argument("--port", type=int, default=1883,
-                        help="MQTT broker port (default: 1883)")
+    parser.add_argument("--broker", default=None,
+                        help="MQTT broker address (auto-detected from JMRI config)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="MQTT broker port (auto-detected from JMRI config)")
+    parser.add_argument("--prefix", default=None,
+                        help="MQTT topic prefix (auto-detected from JMRI config)")
     parser.add_argument("--address", type=int, default=None,
                         help="DCC address to acquire on startup")
     args = parser.parse_args()
 
-    ctrl = LocoController(args.broker, args.port)
+    resolve_mqtt_args(args)
+
+    ctrl = LocoController(args.broker, args.port, prefix=args.prefix)
     if not ctrl.connect():
         sys.exit(1)
 
@@ -439,6 +628,31 @@ def main():
             elif cmd == "audio":
                 ctrl.capture_audio()
 
+            elif cmd == "roster":
+                if len(parts) < 2:
+                    print("Usage: roster ROSTER_ID")
+                    continue
+                roster_id = " ".join(parts[1:])
+                ctrl.query_roster(roster_id=roster_id)
+
+            elif cmd == "roster-addr":
+                if len(parts) < 2:
+                    print("Usage: roster-addr ADDRESS")
+                    continue
+                ctrl.query_roster(address=int(parts[1]))
+
+            elif cmd == "cv-read":
+                if len(parts) < 2:
+                    print("Usage: cv-read CV_NUMBER")
+                    continue
+                ctrl.read_cv(int(parts[1]))
+
+            elif cmd == "cv-write":
+                if len(parts) < 3:
+                    print("Usage: cv-write CV_NUMBER VALUE")
+                    continue
+                ctrl.write_cv(int(parts[1]), int(parts[2]))
+
             elif cmd == "shuttle":
                 spd = parse_speed(parts[1]) if len(parts) > 1 else 0.3
                 runs = int(parts[2]) if len(parts) > 2 else 4
@@ -447,6 +661,7 @@ def main():
 
             elif cmd == "status":
                 print(f"  Broker:  {ctrl.broker}:{ctrl.port}")
+                print(f"  Prefix:  {ctrl.prefix}")
                 print(f"  Connected: {ctrl.connected}")
                 print(f"  Bridge:  {'ready' if ctrl.bridge_ready else 'not detected'}")
                 print(f"  Address: {ctrl.current_address or 'none'}")

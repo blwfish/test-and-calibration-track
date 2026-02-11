@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 
 # Import sibling modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from loco_control import LocoController
+from loco_control import LocoController, resolve_mqtt_args
 from calibration_db import CalibrationDB
 
 
@@ -434,6 +434,80 @@ class SpeedCalibrator:
         self.log(f"Stored in DB: loco '{roster_id}' run #{run_id}")
         return run_id
 
+    def validate_roster(self):
+        """Check that the roster_id exists in JMRI. Returns True if OK or skipped."""
+        args = self.args
+        if not args.roster_id or args.no_validate_roster or args.dry_run:
+            if args.dry_run and args.roster_id:
+                self.log(f"[dry-run] Would validate roster entry '{args.roster_id}'")
+            return True
+
+        self.log(f"Validating roster entry '{args.roster_id}'...")
+        result = self.ctrl.query_roster(roster_id=args.roster_id)
+        if result and result.get("found"):
+            entry = result["entries"][0]
+            self.log(f"  Roster: {entry['roster_id']}, addr={entry.get('address')}, "
+                     f"decoder={entry.get('decoder_model', '?')}")
+            # Update CalibrationDB with decoder type from roster
+            if entry.get("decoder_model"):
+                db = CalibrationDB(args.db)
+                try:
+                    db.get_or_create_loco(
+                        args.roster_id, args.address,
+                        decoder_type=entry["decoder_model"])
+                finally:
+                    db.close()
+            return True
+        elif result:
+            self.log(f"  WARNING: {result.get('error', 'Roster entry not found')}")
+            self.log("  Profile import will fail after calibration")
+            return True  # warning only, don't abort
+        else:
+            self.log("  WARNING: No response from JMRI bridge (timeout)")
+            self.log("  Is jmri_throttle_bridge.py running?")
+            return True  # warning only
+
+    def import_to_jmri(self, output):
+        """Import the speed profile into the JMRI roster entry."""
+        args = self.args
+        roster_id = args.roster_id
+        if not roster_id:
+            self.log("Skipping JMRI import: no --roster-id specified")
+            return False
+
+        speed_table = output.get("speed_table", [])
+        if not speed_table:
+            self.log("Skipping JMRI import: no speed data")
+            return False
+
+        # Build import entries: forward + reverse per step
+        entries = []
+        for step_data in speed_table:
+            speed_mph = step_data.get("avg_scale_mph")
+            if speed_mph is None:
+                continue
+            speed_step = step_data["speed_step"]
+            entries.append({"speed_step": speed_step, "speed_mph": speed_mph,
+                            "direction": "forward"})
+            entries.append({"speed_step": speed_step, "speed_mph": speed_mph,
+                            "direction": "reverse"})
+
+        self.log(f"Importing {len(entries)} speed entries to JMRI roster '{roster_id}'...")
+        result = self.ctrl.import_speed_profile(
+            roster_id, entries,
+            scale_factor=output.get("scale_factor", HO_SCALE_FACTOR),
+            clear_existing=True, timeout=30.0)
+
+        if result and result.get("success"):
+            self.log(f"  JMRI import OK: {result.get('entries_imported')} entries")
+            return True
+        elif result:
+            self.log(f"  JMRI import FAILED: {result.get('error', 'unknown')}")
+            return False
+        else:
+            self.log("  JMRI import FAILED: no response (timeout)")
+            return False
+
     def run(self):
         """Execute the full calibration sequence."""
         args = self.args
@@ -450,6 +524,9 @@ class SpeedCalibrator:
                 return False
             time.sleep(1)
 
+            # Validate roster entry before starting
+            self.validate_roster()
+
             # Acquire throttle
             self.log(f"Acquiring throttle for address {args.address}...")
             if not self.ctrl.acquire(args.address):
@@ -458,6 +535,7 @@ class SpeedCalibrator:
             time.sleep(0.5)
         else:
             self.log("[dry-run] Would connect and acquire throttle")
+            self.validate_roster()
 
         try:
             # Phase 1: Start-of-motion detection
@@ -485,6 +563,12 @@ class SpeedCalibrator:
             self.save_to_db(db, output)
         finally:
             db.close()
+
+        # Import to JMRI roster
+        if not args.no_import_profile and not self.aborted and not args.dry_run:
+            self.import_to_jmri(output)
+        elif args.dry_run and args.roster_id and not args.no_import_profile:
+            self.log(f"[dry-run] Would import speed profile to JMRI roster '{args.roster_id}'")
 
         # Summary
         summary = output.get("summary", {})
@@ -525,10 +609,12 @@ Examples:
 
     parser.add_argument("--address", type=int, required=True,
                         help="DCC address of locomotive to calibrate")
-    parser.add_argument("--broker", default="192.168.68.250",
-                        help="MQTT broker address (default: 192.168.68.250)")
-    parser.add_argument("--port", type=int, default=1883,
-                        help="MQTT broker port (default: 1883)")
+    parser.add_argument("--broker", default=None,
+                        help="MQTT broker address (auto-detected from JMRI config)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="MQTT broker port (auto-detected from JMRI config)")
+    parser.add_argument("--prefix", default=None,
+                        help="MQTT topic prefix (auto-detected from JMRI config)")
     parser.add_argument("--min-step", type=int, default=1,
                         help="Starting speed step (default: 1)")
     parser.add_argument("--max-step", type=int, default=126,
@@ -555,11 +641,16 @@ Examples:
                         help="JMRI roster ID (default: 'addr:ADDRESS')")
     parser.add_argument("--db", default="calibration-data/calibration.db",
                         help="SQLite database path (default: calibration-data/calibration.db)")
+    parser.add_argument("--no-import-profile", action="store_true",
+                        help="Skip JMRI speed profile import after run")
+    parser.add_argument("--no-validate-roster", action="store_true",
+                        help="Skip pre-run roster validation")
 
     args = parser.parse_args()
+    resolve_mqtt_args(args)
 
     # Create controller (won't connect until run())
-    ctrl = LocoController(args.broker, args.port)
+    ctrl = LocoController(args.broker, args.port, prefix=args.prefix)
 
     calibrator = SpeedCalibrator(ctrl, args)
     success = calibrator.run()
