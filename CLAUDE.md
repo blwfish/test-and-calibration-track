@@ -22,10 +22,12 @@ scripts/            JMRI bridge and orchestration scripts
   jmri_throttle_bridge.py   Jython script for JMRI (MQTT→DCC throttle)
   loco_control.py           Python CLI for loco control and testing
   calibrate_speed.py        Automated speed calibration sweep
+  calibration_db.py         SQLite database for calibration data
+  test_calibration_db.py    Tests for calibration_db (25 cases)
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket STL/STEP files
-calibration-data/   Output JSON files from calibration runs (gitignored)
+calibration-data/   Output JSON + SQLite database from calibration runs (gitignored)
 ```
 
 ## Build Commands
@@ -144,12 +146,32 @@ python3 scripts/loco_control.py --broker 192.168.68.250 --address 3
 `scripts/calibrate_speed.py` — automated calibration sweep:
 ```bash
 python3 scripts/calibrate_speed.py --address 3 --broker 192.168.68.250
+python3 scripts/calibrate_speed.py --address 3 --roster-id "SP 4449"
 python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
 ```
 1. Binary search for start-of-motion threshold (forward & reverse)
 2. Sweep speed steps with multi-pass averaging at low speeds
 3. Output calibration JSON to `calibration-data/`
-4. Shuttle track: alternates direction each pass
+4. Store results in SQLite database (`calibration-data/calibration.db`)
+5. Shuttle track: alternates direction each pass
+
+## Calibration Database
+
+SQLite database (`calibration-data/calibration.db`) stores all calibration data,
+keyed by JMRI roster ID for joining with DecoderPro roster entries.
+
+Tables: `locos`, `calibration_runs`, `speed_entries`, `motion_thresholds`, `audio_adjustments`
+
+```python
+from calibration_db import CalibrationDB
+db = CalibrationDB()
+db.get_or_create_loco("SP 4449", address=4449, decoder_type="LokSound 5")
+runs = db.list_runs(roster_id="SP 4449")
+entries = db.get_speed_entries(run_id)
+delta = db.compare_audio_to_reference(test_run_id, ref_run_id)
+```
+
+Run tests: `python3 scripts/test_calibration_db.py`
 
 ## Related Projects
 
@@ -165,23 +187,30 @@ python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
 - [x] Phase 4: Orchestration script (start-of-motion + full sweep) — software ready, needs hardware test
 - [x] Phase 5: Load cell (drawbar pull measurement) — firmware ready, needs hardware test
 - [x] Phase 6: Vibration & audio analysis — firmware ready, needs hardware test
-- [ ] Phase 7: JMRI roster integration
+- [x] Phase 6b: Automated pull + vibration + audio sweep — firmware state machine + web UI
+- [x] Phase 6c: Calibration database (SQLite) — stores all measurement data keyed by roster ID
+- [ ] Phase 7: JMRI roster integration (speed profile import, CV read/write bridge)
+- [ ] Phase 7b: Audio calibration (reference profiles, volume CV computation)
 - [ ] Phase 8: Fleet calibration
 
-### Current Status (v0.4)
-- Firmware v0.4 running on ESP32 WROOM-32
+### Current Status (v0.5)
+- Firmware v0.5 running on ESP32 WROOM-32
 - MCP23017 at 0x27 responding, interrupt-driven detection working
 - WiFi AP+STA mode with captive portal and NVS credential storage
 - Web UI with real-time WebSocket status, arm/disarm, WiFi/MQTT config
-- Web UI cards for load cell, vibration, and audio with capture controls
+- Web UI throttle control (speed slider, F0-F8 function buttons, direction, E-STOP)
+- Web UI pull + vibration + audio sweep with progress bar and results table
 - MQTT connected to Mosquitto broker, full command set (arm/stop/status/tare/load/vibration/audio)
 - Speed calculation with direction detection and per-interval analysis
 - HX711 load cell driver (bit-banged, EMA smoothing, tare support)
 - Piezo vibration capture (ADC, peak-to-peak and RMS analysis)
 - INMP441 audio capture (I2S, RMS dB and peak dB analysis)
+- Automated pull test state machine: tare → settle → vib capture → audio capture → read → advance
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
+- 25 Python tests passing (calibration_db)
 - JMRI Jython throttle bridge script ready
 - Python loco control CLI with sensor commands
-- Automated calibration script with dry-run mode
+- Automated calibration script with dry-run mode, stores results in SQLite + JSON
+- Calibration database with locos, runs, speed_entries, motion_thresholds, audio_adjustments
 - Calibration track replaces programming track (SPROG program track output)
 - Waiting for TCRT5000 LM393 breakout boards + HX711 + piezo + INMP441

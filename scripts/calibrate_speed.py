@@ -34,9 +34,10 @@ import sys
 import time
 from datetime import datetime, timezone
 
-# Import LocoController from sibling module
+# Import sibling modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loco_control import LocoController
+from calibration_db import CalibrationDB
 
 
 # --- Constants ---
@@ -395,6 +396,44 @@ class SpeedCalibrator:
         self.log(f"Results saved to {path}")
         return path
 
+    def save_to_db(self, db, output):
+        """Store calibration results in the SQLite database."""
+        args = self.args
+        roster_id = args.roster_id or f"addr:{args.address}"
+        duration = output.get("summary", {}).get("duration_sec")
+
+        loco_id = db.get_or_create_loco(roster_id, args.address)
+        run_id = db.create_run(
+            loco_id, run_type="speed",
+            direction="both",
+            step_increment=args.step_inc,
+            settle_ms=int(args.settle * 1000),
+        )
+
+        # Store motion thresholds
+        if self.start_of_motion:
+            db.set_motion_threshold(run_id, "forward",
+                                    self.start_of_motion["forward_step"])
+            db.set_motion_threshold(run_id, "reverse",
+                                    self.start_of_motion["reverse_step"])
+
+        # Store speed entries
+        for entry in self.results:
+            db.add_speed_entry(
+                run_id,
+                speed_step=entry["speed_step"],
+                throttle_pct=entry.get("throttle_pct"),
+                speed_mph=entry.get("avg_scale_mph"),
+            )
+
+        if self.aborted:
+            db.abort_run(run_id, duration_sec=duration)
+        else:
+            db.complete_run(run_id, duration_sec=duration)
+
+        self.log(f"Stored in DB: loco '{roster_id}' run #{run_id}")
+        return run_id
+
     def run(self):
         """Execute the full calibration sequence."""
         args = self.args
@@ -436,9 +475,16 @@ class SpeedCalibrator:
             self.aborted = True
             self.stop_loco()
 
-        # Save results
+        # Save results (JSON)
         output = self.build_output()
         path = self.save_output(output)
+
+        # Save results (SQLite)
+        db = CalibrationDB(args.db)
+        try:
+            self.save_to_db(db, output)
+        finally:
+            db.close()
 
         # Summary
         summary = output.get("summary", {})
@@ -505,6 +551,10 @@ Examples:
                         help="Skip binary search, start sweep at --min-step")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print planned operations without sending MQTT messages")
+    parser.add_argument("--roster-id", default=None,
+                        help="JMRI roster ID (default: 'addr:ADDRESS')")
+    parser.add_argument("--db", default="calibration-data/calibration.db",
+                        help="SQLite database path (default: calibration-data/calibration.db)")
 
     args = parser.parse_args()
 

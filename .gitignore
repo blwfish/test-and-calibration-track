@@ -11,6 +11,9 @@ venv/
 
 # Calibration output data (per-loco, potentially large)
 calibration-data/*.json
+calibration-data/*.db
+calibration-data/*.db-wal
+calibration-data/*.db-shm
 
 # KiCad backups and generated files
 hardware/kicad/*-backups/
