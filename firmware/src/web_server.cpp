@@ -114,6 +114,7 @@ static String buildStatusJson() {
     doc["wifi_mode"] = wifi_is_sta() ? "STA" : "AP";
     doc["ip"] = wifi_get_ip();
     doc["ssid"] = wifi_get_ssid();
+    doc["mac"] = WiFi.macAddress();
     doc["mqtt_connected"] = mqtt_is_connected();
     doc["mqtt_broker"] = mqtt_get_broker();
     doc["mqtt_prefix"] = mqtt_get_prefix();

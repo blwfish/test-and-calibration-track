@@ -315,6 +315,7 @@
   <div class="card config-card">
     <h2>WiFi</h2>
     <div class="config-status" id="wifiStatus">--</div>
+    <div class="config-status">MAC: <span id="macAddr" style="font-family:monospace;color:#e0e0e0;user-select:all">--</span></div>
     <select id="ssidSelect" onchange="document.getElementById('ssidInput').value=this.value">
       <option value="">Scan for networks...</option>
     </select>
@@ -524,6 +525,7 @@ function handleMessage(msg) {
         d.sensors + ' @ ' + d.spacing_mm + 'mm';
       document.getElementById('wifiStatus').textContent =
         d.wifi_mode + ' | ' + d.ssid + ' | ' + d.ip;
+      if (d.mac) document.getElementById('macAddr').textContent = d.mac;
       updateSensorDots(d.sensors, null);
       // MQTT
       const mqttDot = document.getElementById('mqttDot');
