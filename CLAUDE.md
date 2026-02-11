@@ -24,8 +24,11 @@ scripts/            JMRI bridge and orchestration scripts
   calibrate_speed.py        Automated speed calibration sweep with JMRI auto-import
   calibration_db.py         SQLite database for calibration data
   jmri_config.py            Auto-detect MQTT broker/prefix from JMRI profile XML
+  audio_calibrate.py        Match decoder volume to fleet reference via CV adjustment
+  decoder_volume.py         Decoder volume CV knowledge base (LokSound, Tsunami2, etc.)
   test_calibration_db.py    Tests for calibration_db (34 cases)
   test_jmri_bridge.py       Tests for JMRI bridge protocol + config reader (21 cases)
+  test_audio_calibrate.py   Tests for audio calibration + decoder lookup (34 cases)
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket STL/STEP files
@@ -177,13 +180,28 @@ python3 scripts/loco_control.py --broker 192.168.68.250 --address 3  # manual ov
 python3 scripts/calibrate_speed.py --address 3 --roster-id "SP 4449"
 python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
 python3 scripts/calibrate_speed.py --address 3 --no-import-profile  # skip JMRI import
+python3 scripts/calibrate_speed.py --address 3 --roster-id "SP 4449" --audio  # capture audio
+python3 scripts/calibrate_speed.py --address 3 --roster-id "SP 4449" --compare-audio  # + compare
 ```
 1. Binary search for start-of-motion threshold (forward & reverse)
 2. Sweep speed steps with multi-pass averaging at low speeds
-3. Output calibration JSON to `calibration-data/`
-4. Store results in SQLite database (`calibration-data/calibration.db`)
-5. Auto-import speed profile into JMRI roster (when `--roster-id` given)
-6. Shuttle track: alternates direction each pass
+3. Optional audio capture at each step (`--audio`)
+4. Output calibration JSON to `calibration-data/`
+5. Store results in SQLite database (`calibration-data/calibration.db`)
+6. Auto-import speed profile into JMRI roster (when `--roster-id` given)
+7. Shuttle track: alternates direction each pass
+
+`scripts/audio_calibrate.py` — match decoder volume to fleet reference:
+```bash
+python3 scripts/audio_calibrate.py --set-reference "SP 4449"   # designate reference
+python3 scripts/audio_calibrate.py --list                      # fleet audio overview
+python3 scripts/audio_calibrate.py --roster-id "UP 844"        # show recommendation
+python3 scripts/audio_calibrate.py --roster-id "UP 844" --apply  # write CV
+python3 scripts/audio_calibrate.py --roster-id "UP 844" --dry-run  # preview only
+```
+Compares target loco audio levels to fleet reference, looks up decoder volume CV
+(LokSound 5: CV 63, Tsunami2/Econami: CV 128, Digitrax: CV 58, BLI: CV 161,
+TCS: CV 128), and computes/applies the adjustment.
 
 ## Calibration Database
 
@@ -216,8 +234,9 @@ db.add_audio_adjustment(run_id, ref_run_id, delta_db=2.5, member_address=101)
 
 Run tests:
 ```bash
-python3 scripts/test_calibration_db.py   # 34 calibration DB tests
-python3 scripts/test_jmri_bridge.py      # 21 JMRI bridge/config tests
+python3 scripts/test_calibration_db.py    # 34 calibration DB tests
+python3 scripts/test_jmri_bridge.py       # 21 JMRI bridge/config tests
+python3 scripts/test_audio_calibrate.py   # 34 audio calibration tests
 ```
 
 ## Related Projects
@@ -239,10 +258,10 @@ python3 scripts/test_jmri_bridge.py      # 21 JMRI bridge/config tests
 - [x] Phase 6d: Consist support — multi-decoder locos, per-member audio adjustments, schema v2
 - [x] Phase 6e: Track safety switches — layout/prog + DCC/DC sensing, interlocks, web UI
 - [x] Phase 7: JMRI roster integration — roster query, speed profile import, CV read/write over MQTT
-- [ ] Phase 7b: Audio calibration (reference profiles, volume CV computation)
+- [x] Phase 7b: Audio calibration — reference profiles, decoder CV lookup, fleet volume matching
 - [ ] Phase 8: Fleet calibration
 
-### Current Status (v0.6)
+### Current Status (v0.7)
 - Firmware v0.5 running on ESP32 WROOM-32
 - MCP23017 at 0x27 responding, interrupt-driven detection working
 - WiFi AP+STA mode with captive portal and NVS credential storage
@@ -265,8 +284,14 @@ python3 scripts/test_jmri_bridge.py      # 21 JMRI bridge/config tests
   - CV read/write via MQTT (service mode, single + batch, with status feedback)
   - Auto-import after calibration sweep (when --roster-id given)
   - Auto-detect MQTT broker/port/prefix from JMRI profile XML
+- Audio calibration (Phase 7b):
+  - Audio capture during calibration sweep (--audio flag)
+  - Fleet audio comparison with reference loco designation
+  - Decoder volume CV lookup (LokSound 5, Tsunami2, Econami, Digitrax, BLI, TCS)
+  - dB-to-CV computation and optional auto-apply
+  - Volume grading: quiet/normal/loud/EXCESSIVE based on fleet statistics
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
-- 55 Python tests passing (calibration_db: 34, jmri_bridge: 21)
+- 89 Python tests passing (calibration_db: 34, jmri_bridge: 21, audio_calibrate: 34)
 - JMRI Jython throttle bridge with roster, CV, and speed profile import handlers
 - Python loco control CLI with sensor, roster, and CV commands
 - Automated calibration script with dry-run mode, JMRI auto-import, stores results in SQLite + JSON

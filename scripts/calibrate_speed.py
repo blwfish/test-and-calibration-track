@@ -242,6 +242,7 @@ class SpeedCalibrator:
                      f"{eta_str}")
 
             pass_results = []
+            audio_data = None
 
             for p in range(num_passes):
                 # Set direction for this pass
@@ -254,6 +255,17 @@ class SpeedCalibrator:
                     time.sleep(settle)
                 else:
                     self.log(f"  [dry-run] settle {settle}s")
+
+                # Capture audio on first pass (loco at steady speed)
+                if p == 0 and getattr(args, 'audio', False):
+                    if args.dry_run:
+                        audio_data = {"rms_db": -42.0, "peak_db": -35.0}
+                        self.log(f"  [dry-run] Audio: rms=-42.0 dB")
+                    else:
+                        audio_data = self.ctrl.wait_for_audio(timeout=5.0)
+                        if audio_data:
+                            self.log(f"  Audio: rms={audio_data.get('rms_db')} dB, "
+                                     f"peak={audio_data.get('peak_db')} dB")
 
                 # Arm and measure
                 result = self.arm_and_measure(timeout=args.timeout)
@@ -279,14 +291,14 @@ class SpeedCalibrator:
                     time.sleep(1)
 
             # Aggregate results for this step
-            entry = self._aggregate_step(step, pass_results)
+            entry = self._aggregate_step(step, pass_results, audio_data)
             self.results.append(entry)
 
         # Stop loco at end
         self.stop_loco()
         self.log("=== Sweep complete ===")
 
-    def _aggregate_step(self, step, pass_results):
+    def _aggregate_step(self, step, pass_results, audio_data=None):
         """Aggregate multiple passes for a single speed step."""
         valid = [r for r in pass_results if r and "avg_speed_mph" in r]
 
@@ -296,6 +308,11 @@ class SpeedCalibrator:
             "passes": len(pass_results),
             "valid_passes": len(valid),
         }
+
+        # Audio data (captured once per step)
+        if audio_data:
+            entry["audio_rms_db"] = audio_data.get("rms_db")
+            entry["audio_peak_db"] = audio_data.get("peak_db")
 
         if valid:
             # Average the speed across passes
@@ -424,6 +441,8 @@ class SpeedCalibrator:
                 speed_step=entry["speed_step"],
                 throttle_pct=entry.get("throttle_pct"),
                 speed_mph=entry.get("avg_scale_mph"),
+                audio_rms_db=entry.get("audio_rms_db"),
+                audio_peak_db=entry.get("audio_peak_db"),
             )
 
         if self.aborted:
@@ -508,6 +527,37 @@ class SpeedCalibrator:
             self.log("  JMRI import FAILED: no response (timeout)")
             return False
 
+    def compare_audio_to_reference(self, db_path="calibration-data/calibration.db"):
+        """Compare this run's audio to the fleet reference and print recommendation."""
+        args = self.args
+        db = CalibrationDB(db_path)
+        try:
+            ref = db.get_audio_reference()
+            if not ref:
+                self.log("No audio reference loco set — skip comparison")
+                self.log("  Set one with: audio_calibrate.py --set-reference ROSTER_ID")
+                return
+
+            ref_run = db.get_latest_run(ref["roster_id"], complete_only=True)
+            target_run = db.get_latest_run(args.roster_id, complete_only=True)
+            if not ref_run or not target_run:
+                self.log("Audio comparison skipped: missing run data")
+                return
+
+            delta = db.compare_audio_to_reference(target_run["id"], ref_run["id"])
+            if delta is None:
+                self.log("Audio comparison skipped: no overlapping audio data")
+                return
+
+            self.log(f"\n=== Audio Comparison ===")
+            self.log(f"  vs reference '{ref['roster_id']}': {delta:+.1f} dB")
+            if abs(delta) > 1.0:
+                self.log(f"  Run: audio_calibrate.py --roster-id '{args.roster_id}' --apply")
+            else:
+                self.log(f"  Within tolerance (< 1 dB)")
+        finally:
+            db.close()
+
     def run(self):
         """Execute the full calibration sequence."""
         args = self.args
@@ -569,6 +619,10 @@ class SpeedCalibrator:
             self.import_to_jmri(output)
         elif args.dry_run and args.roster_id and not args.no_import_profile:
             self.log(f"[dry-run] Would import speed profile to JMRI roster '{args.roster_id}'")
+
+        # Audio comparison
+        if getattr(args, 'compare_audio', False) and args.roster_id:
+            self.compare_audio_to_reference(db_path=args.db)
 
         # Summary
         summary = output.get("summary", {})
@@ -645,8 +699,16 @@ Examples:
                         help="Skip JMRI speed profile import after run")
     parser.add_argument("--no-validate-roster", action="store_true",
                         help="Skip pre-run roster validation")
+    parser.add_argument("--audio", action="store_true",
+                        help="Capture audio levels at each speed step")
+    parser.add_argument("--compare-audio", action="store_true",
+                        help="Compare audio to reference after run (implies --audio)")
 
     args = parser.parse_args()
+
+    # --compare-audio implies --audio
+    if args.compare_audio:
+        args.audio = True
     resolve_mqtt_args(args)
 
     # Create controller (won't connect until run())

@@ -52,6 +52,7 @@ class LocoController:
         self.current_address = None
         self.last_status = None
         self.last_result = None
+        self.last_audio = None
 
         # Build topic paths from configurable prefix
         self.prefix = prefix.rstrip("/")
@@ -177,6 +178,7 @@ class LocoController:
                 print(f"[vibration] {payload}")
 
         elif topic == self.t_sensor + "audio":
+            self.last_audio = payload
             try:
                 r = json.loads(payload)
                 rms_db = r.get("rms_db", "?")
@@ -351,6 +353,23 @@ class LocoController:
         """Start an audio capture."""
         self.client.publish(self.t_sensor + "audio", "")
         print("Audio capture started")
+
+    def wait_for_audio(self, timeout=5.0):
+        """Request audio capture and wait for result.
+
+        Returns parsed dict {rms_db, peak_db, samples, duration_ms} or None.
+        """
+        self.last_audio = None
+        self.capture_audio()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.last_audio is not None:
+                try:
+                    return json.loads(self.last_audio)
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            time.sleep(0.1)
+        return None
 
     # --- Roster commands ---
 
