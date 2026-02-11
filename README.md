@@ -22,6 +22,12 @@ A full calibration run takes ~5-10 minutes per locomotive.
 - **Position tracking**: Know actual velocity from commanded speed step for continuous position estimation
 - **Fleet triage**: Vibration and audio analysis flags mechanisms that need service and decoders with wrong volume settings
 
+## Current Status
+
+**Phase 1 prototype running.** Firmware v0.3 on ESP32 WROOM-32 with MCP23017 GPIO expander. WiFi web UI, MQTT integration, and JMRI throttle bridge all functional. Awaiting TCRT5000 sensor breakout boards to complete detection testing.
+
+See [Implementation Status](#implementation-status) below for phase details.
+
 ## Hardware
 
 ### Track
@@ -34,49 +40,56 @@ A full calibration run takes ~5-10 minutes per locomotive.
 - 1500mm (59") sensor span with run-up room at each end
 - Sensors mounted in 3D-printed plugs pressed into holes in the plywood base
 - MCP23017 I2C GPIO expander handles all 16 sensor inputs
+- Phase 1 prototype uses 4 sensors on breadboard
 
 ### Electronics
-- ESP32 DevKit — mounts under the track, communicates via WiFi/MQTT
-- MCP23017 + 16x 10k pullup resistors for sensor inputs
+- ESP32 WROOM-32 DevKit — mounts under the track, communicates via WiFi/MQTT
+- MCP23017 (I2C address 0x27) + sensor breakout boards (LM393, digital output)
 - HX711 ADC + 500g beam load cell for tractive effort
 - INMP441 MEMS microphone for decoder audio level
 - 27mm piezoelectric disc for mechanism vibration
-- Single PCB (~60x80mm) carries all electronics
 
 ### Bill of Materials
 
-| Qty | Part | Purpose | Have? |
-|-----|------|---------|-------|
-| 16 | TCRT5000 | Speed detection | Yes (box of 60) |
-| 1 | ESP32 DevKit | Controller | Yes |
-| 1 | MCP23017 | 16-ch GPIO expander | Yes |
-| 16 | 10k resistor | Sensor pullups | Yes |
-| 2 | 4.7k resistor | I2C pullups | Yes |
+| Qty | Part | Purpose | Status |
+|-----|------|---------|--------|
+| 16 | TCRT5000 LM393 breakout | Speed detection | Ordered (20x) |
+| 1 | ESP32 WROOM-32 DevKit | Controller | In use |
+| 1 | MCP23017 breakout | 16-ch GPIO expander | In use |
 | 1 | 500g beam load cell | Drawbar pull | Ordered |
 | 1 | HX711 breakout | Load cell ADC | Ordered |
 | 1 | INMP441 breakout | Decoder audio level | Ordered |
 | 1 | 27mm piezo disc | Vibration sensing | Check |
-| 3 | Resistors + cap | Piezo conditioning | Probably |
-| 1 | PCB or perfboard | Main board | Yes |
-| 2 | Code 70 flex track | Test track (72") | Yes |
-| 1 | 1/4" plywood | Track base | Yes |
+| 1 | PCB or perfboard | Main board | Phase 2 |
 
 ## Software
 
 ### Firmware (ESP32)
 - PlatformIO / Arduino framework
-- Interrupt-driven sensor timestamps via MCP23017 INT pin
-- Speed calculation from sensor transit times
-- MQTT publish of results (speed, vibration, audio, load)
-- Arm/measure/publish cycle controlled by orchestration script
+- Interrupt-driven sensor timestamps via MCP23017 INT pin (GPIO 13)
+- Speed calculation from sensor transit times with direction detection
+- WiFi AP+STA mode with captive portal and NVS credential storage
+- Web UI with real-time WebSocket status, arm/disarm controls, WiFi and MQTT config
+- MQTT publish of results and status; subscribes to arm/stop/status commands
+- 13 native unit tests for speed calculation (runs on desktop, no hardware needed)
 
-### Orchestration Script (Python)
-- `scripts/calibrate_speed.py` — runs on any machine with MQTT access
-- Controls locomotive via JMRI MQTT throttle interface
+### JMRI Throttle Bridge
+- `scripts/jmri_throttle_bridge.py` — Jython script that runs inside JMRI
+- Subscribes to MQTT command topics, translates to DCC throttle calls via SPROG
+- Requires JMRI with both SPROG and MQTT connections configured
+
+### Loco Control CLI
+- `scripts/loco_control.py` — Python CLI for interactive locomotive control
+- Acquire throttle, set speed/direction, arm sensors, shuttle back and forth
+- Useful for testing on roller track
+
+### Orchestration Script (Planned)
+- `scripts/calibrate_speed.py` — automated calibration sweep
+- Controls locomotive via JMRI throttle bridge
 - Collects measurement results from ESP32
 - Outputs calibration JSON per locomotive
 
-### JMRI Integration
+### JMRI Integration (Planned)
 - `scripts/import_speed_profile.py` — Jython script for JMRI
 - Imports calibration data into JMRI RosterSpeedProfile
 - Speed data consumed by warrants, dispatcher, throttle display
@@ -107,9 +120,10 @@ A full calibration run takes ~5-10 minutes per locomotive.
 firmware/           PlatformIO project (ESP32)
   include/          Header files
   src/              Implementation
-  test/             Unit tests
+  data/             LittleFS web UI (index.html)
+  test/             Unit tests (native desktop)
 docs/               Specifications and design documents
-scripts/            Python orchestration and JMRI integration
+scripts/            JMRI bridge and orchestration scripts
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket designs
@@ -118,13 +132,55 @@ calibration-data/   Output files from calibration runs (gitignored)
 
 ## Getting Started
 
-### Phase 1: Prototype (Current)
-1. Wire 4 TCRT5000 sensors + MCP23017 on perfboard
-2. Mount sensors in test section of track
-3. Validate sensor triggering and timing
-4. Basic firmware: arm, detect, compute speed, publish via MQTT
+### Build & Flash
+```bash
+cd firmware
+
+# Compile
+~/.platformio/penv/bin/pio run
+
+# Flash firmware
+~/.platformio/penv/bin/pio run -t upload
+
+# Upload web UI
+~/.platformio/penv/bin/pio run -t uploadfs
+
+# Serial monitor
+~/.platformio/penv/bin/pio device monitor
+
+# Run unit tests (no hardware needed)
+~/.platformio/penv/bin/pio test -e native
+```
+
+### Connect
+1. ESP32 creates WiFi AP "SpeedCal" on first boot
+2. Connect to AP, open `http://192.168.4.1`
+3. Configure home WiFi via web UI (device reboots to STA mode)
+4. Configure MQTT broker via web UI
+5. Arm sensors via web UI or MQTT
+
+### JMRI Setup
+1. Add MQTT connection in JMRI: Edit > Preferences > Connections (same broker, blank channel prefix)
+2. Keep SPROG as default for Throttle in Preferences > Defaults
+3. Run `scripts/jmri_throttle_bridge.py` via Scripting > Run Script
+4. Control from `scripts/loco_control.py`:
+   ```bash
+   pip3 install paho-mqtt
+   python3 scripts/loco_control.py --broker 192.168.68.250 --address 3
+   ```
 
 See [docs/SPEED_CALIBRATION_SPEC.md](docs/SPEED_CALIBRATION_SPEC.md) for the full system specification.
+
+## Implementation Status
+
+- [x] Phase 1: Hardware build & basic detection (4 sensors on breadboard prototype)
+- [ ] Phase 2: Full 16-sensor PCB + MCP23017 interrupt timing
+- [x] Phase 3: MQTT integration & speed calculation firmware
+- [ ] Phase 4: Orchestration script (start-of-motion + full sweep)
+- [ ] Phase 5: Load cell (drawbar pull measurement)
+- [ ] Phase 6: Vibration & audio analysis
+- [ ] Phase 7: JMRI roster integration
+- [ ] Phase 8: Fleet calibration
 
 ## Related Projects
 
