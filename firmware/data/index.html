@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speed Calibration Track</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e; color: #e0e0e0; padding: 16px;
+    max-width: 600px; margin: 0 auto;
+  }
+  h1 { font-size: 1.3em; color: #e94560; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 0.85em; margin-bottom: 16px; }
+  .card {
+    background: #16213e; border-radius: 8px; padding: 16px;
+    margin-bottom: 12px; border: 1px solid #0f3460;
+  }
+  .card h2 { font-size: 1em; color: #e94560; margin-bottom: 10px; }
+  .status-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .status-label { color: #888; }
+  .status-value { font-weight: 600; }
+  .state-idle { color: #888; }
+  .state-armed { color: #f5a623; }
+  .state-measuring { color: #4fc3f7; }
+  .state-complete { color: #66bb6a; }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+  button {
+    flex: 1; padding: 12px 16px; border: none; border-radius: 6px;
+    font-size: 1em; font-weight: 600; cursor: pointer; transition: 0.2s;
+  }
+  button:active { transform: scale(0.97); }
+  .btn-arm { background: #e94560; color: white; }
+  .btn-arm:hover { background: #d63851; }
+  .btn-arm:disabled { background: #555; cursor: not-allowed; }
+  .btn-disarm { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560; }
+  .btn-disarm:hover { background: #1a4a7a; }
+  .sensors {
+    display: flex; gap: 6px; justify-content: center; margin: 12px 0;
+  }
+  .sensor-dot {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #2a2a4a; border: 2px solid #444;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75em; font-weight: 600; transition: 0.3s;
+  }
+  .sensor-dot.triggered {
+    background: #e94560; border-color: #e94560; color: white;
+  }
+  .result-speed {
+    text-align: center; font-size: 2.5em; font-weight: 700;
+    color: #4fc3f7; margin: 12px 0 4px;
+  }
+  .result-unit { text-align: center; color: #888; font-size: 0.85em; margin-bottom: 12px; }
+  .result-detail { font-size: 0.85em; color: #aaa; margin-bottom: 4px; }
+  .intervals {
+    display: flex; gap: 4px; justify-content: center; margin: 8px 0;
+  }
+  .interval-bar {
+    width: 30px; background: #0f3460; border-radius: 3px;
+    display: flex; align-items: flex-end; justify-content: center;
+    font-size: 0.6em; color: #888; min-height: 8px;
+  }
+  .interval-fill {
+    background: #4fc3f7; border-radius: 3px; width: 100%;
+    min-height: 4px; transition: height 0.3s;
+  }
+  .hidden { display: none; }
+  .wifi-card input {
+    width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px;
+    border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
+  }
+  .wifi-card select {
+    width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px;
+    border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
+  }
+  .wifi-status { font-size: 0.85em; color: #888; margin-bottom: 8px; }
+  .conn-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px;
+  }
+  .conn-dot.connected { background: #66bb6a; }
+  .conn-dot.disconnected { background: #e94560; }
+  .conn-dot.ws-connecting { background: #f5a623; }
+  .log { font-family: monospace; font-size: 0.8em; color: #888;
+    max-height: 150px; overflow-y: auto; margin-top: 8px;
+    padding: 8px; background: #111; border-radius: 4px;
+  }
+  .log-entry { margin-bottom: 2px; }
+  .log-entry.result { color: #4fc3f7; }
+  .log-entry.error { color: #e94560; }
+</style>
+</head>
+<body>
+
+<h1>Speed Calibration Track</h1>
+<div class="subtitle">
+  <span class="conn-dot disconnected" id="connDot"></span>
+  <span id="connText">Connecting...</span>
+</div>
+
+<!-- Status card -->
+<div class="card">
+  <h2>Status</h2>
+  <div class="status-row">
+    <span class="status-label">State</span>
+    <span class="status-value state-idle" id="state">idle</span>
+  </div>
+  <div class="status-row">
+    <span class="status-label">Sensors</span>
+    <span class="status-value" id="sensorInfo">4 @ 100mm</span>
+  </div>
+  <div class="sensors" id="sensorDots"></div>
+  <div class="btn-row">
+    <button class="btn-arm" id="btnArm" onclick="sendCmd('arm')">Arm</button>
+    <button class="btn-disarm" id="btnDisarm" onclick="sendCmd('disarm')">Disarm</button>
+  </div>
+</div>
+
+<!-- Result card -->
+<div class="card hidden" id="resultCard">
+  <h2>Last Run</h2>
+  <div class="result-speed" id="avgSpeed">--</div>
+  <div class="result-unit">scale mph (HO)</div>
+  <div class="result-detail" id="resultDir"></div>
+  <div class="result-detail" id="resultSensors"></div>
+  <div class="result-detail" id="resultDuration"></div>
+  <div style="margin-top:10px">
+    <div class="result-detail">Interval speeds (mph):</div>
+    <div class="intervals" id="intervalBars"></div>
+  </div>
+</div>
+
+<!-- Log card -->
+<div class="card">
+  <h2>Log</h2>
+  <div class="log" id="log"></div>
+</div>
+
+<!-- WiFi card -->
+<div class="card wifi-card">
+  <h2>WiFi</h2>
+  <div class="wifi-status" id="wifiStatus">--</div>
+  <select id="ssidSelect" onchange="document.getElementById('ssidInput').value=this.value">
+    <option value="">Scan for networks...</option>
+  </select>
+  <input type="text" id="ssidInput" placeholder="SSID">
+  <input type="password" id="passInput" placeholder="Password">
+  <div class="btn-row">
+    <button class="btn-arm" onclick="wifiConnect()">Connect</button>
+    <button class="btn-disarm" onclick="wifiScan()">Scan</button>
+    <button class="btn-disarm" onclick="wifiDisconnect()">Reset to AP</button>
+  </div>
+</div>
+
+<script>
+let ws;
+let reconnTimer;
+const MAX_LOG = 50;
+
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  d.className = 'log-entry ' + cls;
+  const t = new Date().toLocaleTimeString();
+  d.textContent = t + ' ' + msg;
+  el.appendChild(d);
+  while (el.children.length > MAX_LOG) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+function sendCmd(action) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({action}));
+  }
+}
+
+function updateState(state) {
+  const el = document.getElementById('state');
+  el.textContent = state;
+  el.className = 'status-value state-' + state;
+  document.getElementById('btnArm').disabled = (state === 'armed' || state === 'measuring');
+}
+
+function updateSensorDots(count, triggered) {
+  const container = document.getElementById('sensorDots');
+  container.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'sensor-dot' + (triggered && triggered[i] ? ' triggered' : '');
+    dot.textContent = 'S' + i;
+    container.appendChild(dot);
+  }
+}
+
+function showResult(d) {
+  document.getElementById('resultCard').classList.remove('hidden');
+  document.getElementById('avgSpeed').textContent = d.avg_speed_mph || '--';
+  document.getElementById('resultDir').textContent = 'Direction: ' + (d.direction || '?');
+  document.getElementById('resultSensors').textContent =
+    'Sensors: ' + d.sensors_triggered + ' / ' + document.getElementById('sensorDots').children.length;
+  document.getElementById('resultDuration').textContent =
+    'Duration: ' + (d.duration_ms ? d.duration_ms.toFixed(1) + ' ms' : '--');
+
+  // Interval speed bars
+  const bars = document.getElementById('intervalBars');
+  bars.innerHTML = '';
+  if (d.speeds_mph && d.speeds_mph.length > 0) {
+    const max = Math.max(...d.speeds_mph.map(Number));
+    d.speeds_mph.forEach((v, i) => {
+      const pct = max > 0 ? (Number(v) / max * 60 + 10) : 10;
+      const bar = document.createElement('div');
+      bar.className = 'interval-bar';
+      bar.style.height = '70px';
+      bar.innerHTML = '<div class="interval-fill" style="height:' + pct + '%"></div>';
+      bar.title = v + ' mph';
+      bars.appendChild(bar);
+    });
+  }
+
+  updateSensorDots(d.triggered ? d.triggered.length : 0, d.triggered);
+}
+
+function handleMessage(msg) {
+  try {
+    const d = JSON.parse(msg);
+    if (d.type === 'status') {
+      updateState(d.state);
+      document.getElementById('sensorInfo').textContent =
+        d.sensors + ' @ ' + d.spacing_mm + 'mm';
+      document.getElementById('wifiStatus').textContent =
+        d.wifi_mode + ' | ' + d.ssid + ' | ' + d.ip;
+      updateSensorDots(d.sensors, null);
+    } else if (d.type === 'result') {
+      showResult(d);
+      log('Run: ' + (d.avg_speed_mph || '?') + ' mph ' + (d.direction || ''), 'result');
+      updateState('complete');
+    }
+  } catch(e) {
+    log('Parse error: ' + e, 'error');
+  }
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = () => {
+    document.getElementById('connDot').className = 'conn-dot connected';
+    document.getElementById('connText').textContent = 'Connected';
+    log('WebSocket connected');
+    sendCmd('status');
+    if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
+  };
+
+  ws.onmessage = (e) => handleMessage(e.data);
+
+  ws.onclose = () => {
+    document.getElementById('connDot').className = 'conn-dot disconnected';
+    document.getElementById('connText').textContent = 'Disconnected';
+    log('WebSocket disconnected', 'error');
+    reconnTimer = setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+// WiFi management
+function wifiScan() {
+  fetch('/api/wifi/scan').then(r => r.json()).then(d => {
+    if (d.scanning) {
+      setTimeout(wifiScan, 2000);
+      log('Scanning...');
+      return;
+    }
+    const sel = document.getElementById('ssidSelect');
+    sel.innerHTML = '<option value="">Select network...</option>';
+    (d.networks || []).forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n.ssid;
+      opt.textContent = n.ssid + ' (' + n.rssi + ' dBm)' + (n.open ? ' [open]' : '');
+      sel.appendChild(opt);
+    });
+    log('Found ' + (d.networks || []).length + ' networks');
+  }).catch(e => log('Scan error: ' + e, 'error'));
+}
+
+function wifiConnect() {
+  const ssid = document.getElementById('ssidInput').value;
+  const pass = document.getElementById('passInput').value;
+  if (!ssid) { log('Enter an SSID', 'error'); return; }
+  fetch('/api/wifi/connect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ssid, password: pass})
+  }).then(() => log('Connecting to ' + ssid + '... device will reboot'))
+    .catch(e => log('Connect error: ' + e, 'error'));
+}
+
+function wifiDisconnect() {
+  fetch('/api/wifi/disconnect', {method: 'POST'})
+    .then(() => log('Resetting to AP mode... device will reboot'))
+    .catch(e => log('Error: ' + e, 'error'));
+}
+
+// Init
+connect();
+</script>
+</body>
+</html>

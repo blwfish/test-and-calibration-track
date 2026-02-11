@@ -12,7 +12,7 @@
 
 // --- MCP23017 ---
 #define MCP23017_ADDR         0x27    // A0=A1=A2=HIGH on this board
-#define MCP23017_INT_PIN      4       // ESP32 GPIO for MCP23017 INTA
+#define MCP23017_INT_PIN      13      // ESP32 GPIO for MCP23017 INTA
 
 // MCP23017 registers (IOCON.BANK=0, sequential addressing)
 #define MCP_IODIRA    0x00
@@ -44,6 +44,15 @@
 #define DETECTION_TIMEOUT_MS  60000   // Max time to wait for a complete pass
 #define MIN_RETRIGGER_US      1000    // Ignore re-triggers faster than 1ms
 #define ARM_SETTLE_MS         50      // Settle time after arming before accepting triggers
+
+// --- WiFi ---
+#define WIFI_AP_SSID      "SpeedCal"
+#define WIFI_STA_TIMEOUT  10000   // ms to wait for STA connection
+#define WIFI_NVS_NAMESPACE "wifi"
+
+// --- Web server ---
+#define WS_PATH           "/ws"
+#define HTTP_PORT         80
 
 // --- Serial ---
 #define SERIAL_BAUD   115200

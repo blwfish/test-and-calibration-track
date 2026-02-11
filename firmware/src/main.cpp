@@ -4,6 +4,8 @@
 #include "mcp23017.h"
 #include "sensor_array.h"
 #include "speed_calc.h"
+#include "wifi_manager.h"
+#include "web_server.h"
 
 // Serial command buffer
 static char cmdBuf[32];
@@ -43,9 +45,11 @@ static void processCommand(const char* cmd) {
     if (strcmp(cmd, "arm") == 0) {
         sensor_arm();
         Serial.println("Armed. Waiting for locomotive pass...");
+        web_send_status();
     } else if (strcmp(cmd, "disarm") == 0) {
         sensor_disarm();
         Serial.println("Disarmed.");
+        web_send_status();
     } else if (strcmp(cmd, "status") == 0) {
         printStatus();
     } else if (strcmp(cmd, "read") == 0) {
@@ -63,7 +67,7 @@ void setup() {
 
     Serial.println();
     Serial.println("================================");
-    Serial.println("Speed Calibration Track v0.1");
+    Serial.println("Speed Calibration Track v0.2");
     Serial.printf("Sensors: %d @ %dmm spacing\n", NUM_SENSORS, (int)SENSOR_SPACING_MM);
     Serial.println("================================");
 
@@ -89,7 +93,7 @@ void setup() {
 
     // Initialize MCP23017
     if (!mcp23017_init()) {
-        Serial.println("ERROR: MCP23017 not found at 0x20!");
+        Serial.printf("ERROR: MCP23017 not found at 0x%02X!\n", MCP23017_ADDR);
         Serial.println("Check wiring: SDA=GPIO21, SCL=GPIO22, VCC, GND");
         Serial.println("Halting.");
         while (true) { delay(1000); }
@@ -102,16 +106,26 @@ void setup() {
     // Attach interrupt on MCP23017 INT pin (active-low, falling edge)
     pinMode(MCP23017_INT_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(MCP23017_INT_PIN), sensor_isr, FALLING);
-    Serial.println("Interrupt attached on GPIO 4.");
+    Serial.printf("Interrupt attached on GPIO %d.\n", MCP23017_INT_PIN);
 
     // Read sensors once to show initial state
     readSensors();
 
+    // Start WiFi
+    wifi_init();
+
+    // Start web server
+    web_init();
+
     printHelp();
+    Serial.printf("Web UI: http://%s/\n", wifi_get_ip().c_str());
     Serial.print("> ");
 }
 
 void loop() {
+    // WiFi housekeeping (DNS for captive portal)
+    wifi_process();
+
     // Process serial commands
     while (Serial.available()) {
         char c = Serial.read();
@@ -146,6 +160,9 @@ void loop() {
                 Serial.println("Run complete but could not compute speeds.");
             }
         }
+
+        // Send result to web clients
+        web_send_result();
 
         Serial.println("Type 'arm' to measure again.");
         Serial.print("> ");
