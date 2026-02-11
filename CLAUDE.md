@@ -23,7 +23,7 @@ scripts/            JMRI bridge and orchestration scripts
   loco_control.py           Python CLI for loco control and testing
   calibrate_speed.py        Automated speed calibration sweep
   calibration_db.py         SQLite database for calibration data
-  test_calibration_db.py    Tests for calibration_db (25 cases)
+  test_calibration_db.py    Tests for calibration_db (34 cases)
 hardware/
   kicad/            PCB design files
   3d-prints/        Sensor plug and bracket STL/STEP files
@@ -160,7 +160,12 @@ python3 scripts/calibrate_speed.py --address 3 --dry-run  # preview without MQTT
 SQLite database (`calibration-data/calibration.db`) stores all calibration data,
 keyed by JMRI roster ID for joining with DecoderPro roster entries.
 
-Tables: `locos`, `calibration_runs`, `speed_entries`, `motion_thresholds`, `audio_adjustments`
+Tables: `locos`, `consist_members`, `calibration_runs`, `speed_entries`, `motion_thresholds`, `audio_adjustments`
+
+Consist support: multi-decoder locos (e.g. VGN Triplex with 3 decoders) can be
+defined with `set_consist()`. Pull tests run on the consist as a whole; audio
+is measured per decoder individually, then adjusted per-member via
+`member_address` on `audio_adjustments`. Schema v2 with migration from v1.
 
 ```python
 from calibration_db import CalibrationDB
@@ -169,6 +174,14 @@ db.get_or_create_loco("SP 4449", address=4449, decoder_type="LokSound 5")
 runs = db.list_runs(roster_id="SP 4449")
 entries = db.get_speed_entries(run_id)
 delta = db.compare_audio_to_reference(test_run_id, ref_run_id)
+
+# Consist support
+db.set_consist("VGN Triplex", [
+    {"member_address": 101, "role": "sound", "notes": "front engine"},
+    {"member_address": 102, "role": "sound", "notes": "rear engine"},
+    {"member_address": 103, "role": "silent", "notes": "center engine"},
+])
+db.add_audio_adjustment(run_id, ref_run_id, delta_db=2.5, member_address=101)
 ```
 
 Run tests: `python3 scripts/test_calibration_db.py`
@@ -189,6 +202,7 @@ Run tests: `python3 scripts/test_calibration_db.py`
 - [x] Phase 6: Vibration & audio analysis — firmware ready, needs hardware test
 - [x] Phase 6b: Automated pull + vibration + audio sweep — firmware state machine + web UI
 - [x] Phase 6c: Calibration database (SQLite) — stores all measurement data keyed by roster ID
+- [x] Phase 6d: Consist support — multi-decoder locos, per-member audio adjustments, schema v2
 - [ ] Phase 7: JMRI roster integration (speed profile import, CV read/write bridge)
 - [ ] Phase 7b: Audio calibration (reference profiles, volume CV computation)
 - [ ] Phase 8: Fleet calibration
@@ -207,10 +221,10 @@ Run tests: `python3 scripts/test_calibration_db.py`
 - INMP441 audio capture (I2S, RMS dB and peak dB analysis)
 - Automated pull test state machine: tare → settle → vib capture → audio capture → read → advance
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
-- 25 Python tests passing (calibration_db)
+- 34 Python tests passing (calibration_db: locos, runs, entries, consists, audio adjustments)
 - JMRI Jython throttle bridge script ready
 - Python loco control CLI with sensor commands
 - Automated calibration script with dry-run mode, stores results in SQLite + JSON
-- Calibration database with locos, runs, speed_entries, motion_thresholds, audio_adjustments
+- Calibration database (schema v2) with locos, consist_members, runs, speed_entries, motion_thresholds, audio_adjustments
 - Calibration track replaces programming track (SPROG program track output)
 - Waiting for TCRT5000 LM393 breakout boards + HX711 + piezo + INMP441

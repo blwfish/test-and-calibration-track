@@ -7,6 +7,7 @@ with DecoderPro roster entries.
 
 Schema:
   locos              — one row per locomotive (thin join anchor to roster)
+  consist_members    — links consist locos to their member decoder addresses
   calibration_runs   — one row per test session
   speed_entries      — per-speed-step measurements (speed, pull, vib, audio)
   motion_thresholds  — start-of-motion steps per direction
@@ -31,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -44,9 +45,21 @@ CREATE TABLE IF NOT EXISTS locos (
     address INTEGER NOT NULL,
     decoder_type TEXT,
     is_audio_reference INTEGER DEFAULT 0,
+    is_consist INTEGER DEFAULT 0,
     notes TEXT,
     created TEXT NOT NULL,
     updated TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS consist_members (
+    id INTEGER PRIMARY KEY,
+    consist_loco_id INTEGER NOT NULL REFERENCES locos(id),
+    member_roster_id TEXT,
+    member_address INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'sound',
+    position INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    UNIQUE(consist_loco_id, member_address)
 );
 
 CREATE TABLE IF NOT EXISTS calibration_runs (
@@ -88,6 +101,7 @@ CREATE TABLE IF NOT EXISTS audio_adjustments (
     id INTEGER PRIMARY KEY,
     run_id INTEGER NOT NULL REFERENCES calibration_runs(id),
     reference_run_id INTEGER REFERENCES calibration_runs(id),
+    member_address INTEGER,
     master_volume_delta_db REAL,
     recommended_cv INTEGER,
     recommended_value INTEGER,
@@ -98,6 +112,7 @@ CREATE TABLE IF NOT EXISTS audio_adjustments (
 CREATE INDEX IF NOT EXISTS idx_runs_loco ON calibration_runs(loco_id);
 CREATE INDEX IF NOT EXISTS idx_runs_timestamp ON calibration_runs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_entries_run ON speed_entries(run_id);
+CREATE INDEX IF NOT EXISTS idx_consist_members ON consist_members(consist_loco_id);
 """
 
 
@@ -138,9 +153,35 @@ class CalibrationDB:
                 self._migrate(row[0])
 
     def _migrate(self, from_version: int):
-        """Run schema migrations. Placeholder for future use."""
-        # Future migrations go here as elif blocks
-        pass
+        """Run schema migrations."""
+        if from_version < 2:
+            self._migrate_v1_to_v2()
+
+    def _migrate_v1_to_v2(self):
+        """Add consist support: consist_members table, is_consist flag, member_address."""
+        self.conn.executescript("""
+            ALTER TABLE locos ADD COLUMN is_consist INTEGER DEFAULT 0;
+
+            CREATE TABLE IF NOT EXISTS consist_members (
+                id INTEGER PRIMARY KEY,
+                consist_loco_id INTEGER NOT NULL REFERENCES locos(id),
+                member_roster_id TEXT,
+                member_address INTEGER NOT NULL,
+                role TEXT NOT NULL DEFAULT 'sound',
+                position INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                UNIQUE(consist_loco_id, member_address)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_consist_members
+                ON consist_members(consist_loco_id);
+
+            ALTER TABLE audio_adjustments ADD COLUMN member_address INTEGER;
+        """)
+        self.conn.execute(
+            "UPDATE schema_version SET version = ?", (2,)
+        )
+        self.conn.commit()
 
     def close(self):
         """Close the database connection."""
@@ -223,6 +264,84 @@ class CalibrationDB:
             "SELECT * FROM locos WHERE is_audio_reference = 1"
         ).fetchone()
         return dict(row) if row else None
+
+    # --- Consist management ---
+
+    def set_consist(self, roster_id: str, members: list):
+        """Define a consist and its member decoders.
+
+        Marks the loco as a consist and replaces any existing members.
+
+        members: list of dicts with keys:
+            member_address (int, required): DCC address of this decoder
+            member_roster_id (str, optional): roster ID if member has its own entry
+            role (str, optional): 'sound', 'silent', or 'motor' (default: 'sound')
+            position (int, optional): ordering within consist (default: 0)
+            notes (str, optional): e.g. "front engine", "rear engine"
+        """
+        loco = self.conn.execute(
+            "SELECT id FROM locos WHERE roster_id = ?", (roster_id,)
+        ).fetchone()
+        if not loco:
+            raise ValueError(f"Loco '{roster_id}' not found")
+
+        loco_id = loco["id"]
+
+        # Mark as consist
+        self.conn.execute(
+            "UPDATE locos SET is_consist = 1, updated = ? WHERE id = ?",
+            (self._now_iso(), loco_id)
+        )
+
+        # Replace existing members
+        self.conn.execute(
+            "DELETE FROM consist_members WHERE consist_loco_id = ?",
+            (loco_id,)
+        )
+
+        for m in members:
+            self.conn.execute(
+                "INSERT INTO consist_members "
+                "(consist_loco_id, member_roster_id, member_address, role, position, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (loco_id, m.get("member_roster_id"), m["member_address"],
+                 m.get("role", "sound"), m.get("position", 0), m.get("notes"))
+            )
+
+        self.conn.commit()
+
+    def get_consist_members(self, roster_id: str) -> list:
+        """Get all members of a consist. Returns list of dicts, ordered by position."""
+        rows = self.conn.execute(
+            """
+            SELECT cm.* FROM consist_members cm
+            JOIN locos l ON cm.consist_loco_id = l.id
+            WHERE l.roster_id = ?
+            ORDER BY cm.position
+            """,
+            (roster_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_consist_sound_members(self, roster_id: str) -> list:
+        """Get only sound-decoder members of a consist."""
+        rows = self.conn.execute(
+            """
+            SELECT cm.* FROM consist_members cm
+            JOIN locos l ON cm.consist_loco_id = l.id
+            WHERE l.roster_id = ? AND cm.role = 'sound'
+            ORDER BY cm.position
+            """,
+            (roster_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def is_consist(self, roster_id: str) -> bool:
+        """Check whether a loco is a consist."""
+        row = self.conn.execute(
+            "SELECT is_consist FROM locos WHERE roster_id = ?", (roster_id,)
+        ).fetchone()
+        return bool(row and row["is_consist"])
 
     # --- Calibration runs ---
 
@@ -381,17 +500,38 @@ class CalibrationDB:
     def add_audio_adjustment(self, run_id: int, reference_run_id: int,
                              delta_db: float,
                              recommended_cv: Optional[int] = None,
-                             recommended_value: Optional[int] = None) -> int:
-        """Record a computed audio adjustment. Returns adjustment id."""
+                             recommended_value: Optional[int] = None,
+                             member_address: Optional[int] = None) -> int:
+        """Record a computed audio adjustment. Returns adjustment id.
+
+        member_address: if set, targets a specific decoder within a consist.
+            When None, applies to the loco as a whole (single-decoder or consist overall).
+        """
         cursor = self.conn.execute(
             "INSERT INTO audio_adjustments "
-            "(run_id, reference_run_id, master_volume_delta_db, "
+            "(run_id, reference_run_id, member_address, master_volume_delta_db, "
             " recommended_cv, recommended_value) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (run_id, reference_run_id, delta_db, recommended_cv, recommended_value)
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, reference_run_id, member_address, delta_db,
+             recommended_cv, recommended_value)
         )
         self.conn.commit()
         return cursor.lastrowid
+
+    def get_audio_adjustments(self, run_id: int,
+                               member_address: Optional[int] = None) -> list:
+        """Get audio adjustments for a run, optionally filtered by member address."""
+        if member_address is not None:
+            rows = self.conn.execute(
+                "SELECT * FROM audio_adjustments WHERE run_id = ? AND member_address = ?",
+                (run_id, member_address)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM audio_adjustments WHERE run_id = ?",
+                (run_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def mark_adjustment_applied(self, adjustment_id: int):
         """Mark an audio adjustment as written to the loco."""
