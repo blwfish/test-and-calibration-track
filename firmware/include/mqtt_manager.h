@@ -41,3 +41,15 @@ void mqtt_publish_vibration(const String& json);
 
 // Publish audio analysis (JSON) to {prefix}/speed-cal/{name}/audio
 void mqtt_publish_audio(const String& json);
+
+// --- Throttle bridge relay (ESP32 → JMRI via MQTT) ---
+
+// Publish a throttle command to {prefix}/speed-cal/throttle/{suffix}
+void mqtt_publish_throttle(const char* suffix, const String& payload);
+
+// Throttle state (updated from bridge status messages)
+bool mqtt_get_throttle_acquired();
+int mqtt_get_throttle_address();
+float mqtt_get_throttle_speed();
+bool mqtt_get_throttle_is_forward();
+String mqtt_get_throttle_status();

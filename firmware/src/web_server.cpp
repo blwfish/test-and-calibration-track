@@ -23,6 +23,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
         Serial.printf("WS client %u connected\n", client->id());
         // Send current status on connect
         web_send_status();
+        web_send_throttle_status();
     } else if (type == WS_EVT_DISCONNECT) {
         Serial.printf("WS client %u disconnected\n", client->id());
     } else if (type == WS_EVT_DATA) {
@@ -30,7 +31,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
         AwsFrameInfo* info = (AwsFrameInfo*)arg;
         if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
             // Null-terminate
-            char cmd[64];
+            char cmd[128];
             size_t copyLen = len < sizeof(cmd) - 1 ? len : sizeof(cmd) - 1;
             memcpy(cmd, data, copyLen);
             cmd[copyLen] = '\0';
@@ -39,6 +40,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
             if (deserializeJson(doc, cmd) == DeserializationError::Ok) {
                 const char* action = doc["action"];
                 if (action) {
+                    // --- Sensor commands ---
                     if (strcmp(action, "arm") == 0) {
                         sensor_arm();
                         Serial.println("WS: Armed");
@@ -61,6 +63,38 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                         Serial.println("WS: Audio capture started");
                     } else if (strcmp(action, "load") == 0) {
                         web_send_load();
+
+                    // --- Throttle commands (relay to JMRI bridge via MQTT) ---
+                    } else if (strcmp(action, "acquire") == 0) {
+                        int addr = doc["address"] | 0;
+                        if (addr > 0) {
+                            bool isLong = doc["long"] | (addr >= 128);
+                            String payload = String(addr) + " " + (isLong ? "L" : "S");
+                            mqtt_publish_throttle("acquire", payload);
+                            Serial.printf("WS: Acquire %d (%s)\n", addr, isLong ? "long" : "short");
+                        }
+                    } else if (strcmp(action, "throttle_speed") == 0) {
+                        float val = doc["value"] | 0.0f;
+                        char buf[16];
+                        snprintf(buf, sizeof(buf), "%.3f", val);
+                        mqtt_publish_throttle("speed", String(buf));
+                    } else if (strcmp(action, "forward") == 0) {
+                        mqtt_publish_throttle("direction", "FORWARD");
+                    } else if (strcmp(action, "reverse") == 0) {
+                        mqtt_publish_throttle("direction", "REVERSE");
+                    } else if (strcmp(action, "throttle_stop") == 0) {
+                        mqtt_publish_throttle("stop", "");
+                    } else if (strcmp(action, "estop") == 0) {
+                        mqtt_publish_throttle("estop", "");
+                        Serial.println("WS: E-STOP!");
+                    } else if (strcmp(action, "function") == 0) {
+                        int num = doc["num"] | 0;
+                        bool state = doc["state"] | false;
+                        String payload = String(num) + " " + (state ? "ON" : "OFF");
+                        mqtt_publish_throttle("function", payload);
+                    } else if (strcmp(action, "release") == 0) {
+                        mqtt_publish_throttle("release", "");
+                        Serial.println("WS: Release throttle");
                     }
                 }
             }
@@ -85,6 +119,12 @@ static String buildStatusJson() {
     doc["mqtt_prefix"] = mqtt_get_prefix();
     doc["mqtt_name"] = mqtt_get_name();
     doc["uptime_ms"] = millis();
+
+    // Include throttle state in status message
+    doc["throttle_acquired"] = mqtt_get_throttle_acquired();
+    doc["throttle_address"] = mqtt_get_throttle_address();
+    doc["throttle_speed"] = mqtt_get_throttle_speed();
+    doc["throttle_forward"] = mqtt_get_throttle_is_forward();
 
     if (sensor_get_state() == STATE_MEASURING) {
         const RunResult& r = sensor_get_result();
@@ -139,6 +179,20 @@ static String buildResultJson() {
     return json;
 }
 
+static String buildThrottleStatusJson() {
+    JsonDocument doc;
+    doc["type"] = "throttle";
+    doc["acquired"] = mqtt_get_throttle_acquired();
+    doc["address"] = mqtt_get_throttle_address();
+    doc["speed"] = mqtt_get_throttle_speed();
+    doc["forward"] = mqtt_get_throttle_is_forward();
+    doc["status"] = mqtt_get_throttle_status();
+
+    String json;
+    serializeJson(doc, json);
+    return json;
+}
+
 // --- Public API ---
 
 void web_send_status() {
@@ -171,6 +225,11 @@ void web_send_audio() {
     String json = audio_build_json();
     ws.textAll(json);
     mqtt_publish_audio(json);
+}
+
+void web_send_throttle_status() {
+    String json = buildThrottleStatusJson();
+    ws.textAll(json);
 }
 
 void web_init() {

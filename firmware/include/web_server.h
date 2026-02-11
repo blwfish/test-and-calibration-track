@@ -20,3 +20,6 @@ void web_send_vibration();
 
 // Send audio analysis to WebSocket clients and MQTT.
 void web_send_audio();
+
+// Send throttle bridge status to WebSocket clients.
+void web_send_throttle_status();

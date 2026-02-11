@@ -19,29 +19,74 @@ static String prefix;
 static String deviceName;
 static unsigned long lastReconnectAttempt = 0;
 
-// Build a full topic: {prefix}/speed-cal/{name}/{suffix}
+// --- Throttle state (from bridge status messages) ---
+static bool throttleAcquired = false;
+static int throttleAddress = 0;
+static float throttleSpeed = 0.0f;
+static bool throttleForward = true;
+static String lastThrottleStatus = "";
+
+// Build a full sensor topic: {prefix}/speed-cal/{name}/{suffix}
 static String buildTopic(const char* suffix) {
     return prefix + "/speed-cal/" + deviceName + "/" + suffix;
 }
 
-// MQTT message callback — handles arm, stop, status commands
+// Build a throttle bridge topic: {prefix}/speed-cal/throttle/{suffix}
+static String buildThrottleTopic(const char* suffix) {
+    return prefix + "/speed-cal/" THROTTLE_TOPIC_NAME "/" + suffix;
+}
+
+// Parse bridge status messages and update local throttle state
+static void parseThrottleStatus(const String& status) {
+    lastThrottleStatus = status;
+
+    if (status.startsWith("ACQUIRED")) {
+        throttleAcquired = true;
+        // Parse address: "ACQUIRED 3"
+        int space = status.indexOf(' ');
+        if (space > 0) {
+            throttleAddress = status.substring(space + 1).toInt();
+        }
+    } else if (status.startsWith("FAILED")) {
+        throttleAcquired = false;
+    } else if (status.startsWith("SPEED")) {
+        // "SPEED 0.500"
+        int space = status.indexOf(' ');
+        if (space > 0) {
+            throttleSpeed = status.substring(space + 1).toFloat();
+        }
+    } else if (status == "FORWARD") {
+        throttleForward = true;
+    } else if (status == "REVERSE") {
+        throttleForward = false;
+    } else if (status == "STOPPED") {
+        throttleSpeed = 0.0f;
+    } else if (status == "ESTOPPED") {
+        throttleSpeed = 0.0f;
+    } else if (status.startsWith("RELEASED")) {
+        throttleAcquired = false;
+        throttleAddress = 0;
+        throttleSpeed = 0.0f;
+    } else if (status == "READY") {
+        // Bridge is ready but no throttle acquired yet
+    }
+}
+
+// MQTT message callback — handles sensor commands and throttle status
 static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String topicStr(topic);
-    String armTopic = buildTopic("arm");
-    String stopTopic = buildTopic("stop");
-    String statusTopic = buildTopic("status");
 
-    if (topicStr == armTopic) {
+    // --- Sensor command topics ---
+    if (topicStr == buildTopic("arm")) {
         sensor_arm();
         Serial.println("MQTT: Armed");
         web_send_status();
-        // Publish status confirmation
-        mqtt_publish_status("");  // Will be filled by caller or we build it here
-    } else if (topicStr == stopTopic) {
+        mqtt_publish_status("");
+    } else if (topicStr == buildTopic("stop")) {
         sensor_disarm();
         Serial.println("MQTT: Disarmed");
         web_send_status();
-    } else if (topicStr == statusTopic) {
+    } else if (topicStr == buildTopic("status")) {
         Serial.println("MQTT: Status requested");
         web_send_status();
     } else if (topicStr == buildTopic("tare")) {
@@ -57,6 +102,19 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else if (topicStr == buildTopic("audio")) {
         audio_start_capture();
         Serial.println("MQTT: Audio capture started");
+
+    // --- Throttle bridge status ---
+    } else if (topicStr == buildThrottleTopic("status")) {
+        // Null-terminate payload
+        char buf[128];
+        unsigned int copyLen = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+        String status(buf);
+
+        Serial.printf("MQTT: Bridge status: %s\n", status.c_str());
+        parseThrottleStatus(status);
+        web_send_throttle_status();
     }
 }
 
@@ -71,7 +129,7 @@ static void mqttConnect() {
     if (mqttClient.connect(clientId.c_str())) {
         Serial.println("MQTT: Connected!");
 
-        // Subscribe to command topics
+        // Subscribe to sensor command topics
         mqttClient.subscribe(buildTopic("arm").c_str());
         mqttClient.subscribe(buildTopic("stop").c_str());
         mqttClient.subscribe(buildTopic("status").c_str());
@@ -80,8 +138,13 @@ static void mqttConnect() {
         mqttClient.subscribe(buildTopic("vibration").c_str());
         mqttClient.subscribe(buildTopic("audio").c_str());
 
+        // Subscribe to throttle bridge status
+        mqttClient.subscribe(buildThrottleTopic("status").c_str());
+
         Serial.printf("MQTT: Subscribed to %s/{arm,stop,status,tare,load,vibration,audio}\n",
             (prefix + "/speed-cal/" + deviceName).c_str());
+        Serial.printf("MQTT: Subscribed to %s/status\n",
+            (prefix + "/speed-cal/" THROTTLE_TOPIC_NAME).c_str());
     } else {
         Serial.printf("MQTT: Connection failed, rc=%d\n", mqttClient.state());
     }
@@ -154,6 +217,8 @@ void mqtt_configure(const String& newBroker, const String& newPrefix, const Stri
     lastReconnectAttempt = 0;  // Force immediate reconnect
 }
 
+// --- Sensor publish functions ---
+
 void mqtt_publish_result(const String& json) {
     if (mqttClient.connected()) {
         mqttClient.publish(buildTopic("result").c_str(), json.c_str());
@@ -190,3 +255,19 @@ void mqtt_publish_audio(const String& json) {
         mqttClient.publish(buildTopic("audio").c_str(), json.c_str());
     }
 }
+
+// --- Throttle bridge relay ---
+
+void mqtt_publish_throttle(const char* suffix, const String& payload) {
+    if (mqttClient.connected()) {
+        String topic = buildThrottleTopic(suffix);
+        mqttClient.publish(topic.c_str(), payload.c_str());
+        Serial.printf("MQTT: Throttle %s: %s\n", suffix, payload.c_str());
+    }
+}
+
+bool mqtt_get_throttle_acquired() { return throttleAcquired; }
+int mqtt_get_throttle_address() { return throttleAddress; }
+float mqtt_get_throttle_speed() { return throttleSpeed; }
+bool mqtt_get_throttle_is_forward() { return throttleForward; }
+String mqtt_get_throttle_status() { return lastThrottleStatus; }

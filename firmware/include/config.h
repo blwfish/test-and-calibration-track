@@ -57,7 +57,9 @@
 #define MQTT_DEFAULT_PREFIX   "/cova"
 #define MQTT_DEFAULT_NAME     "speed-cal"
 #define MQTT_RECONNECT_MS     5000    // Retry interval on disconnect
-// Topics: {prefix}/speed-cal/{name}/arm, /stop, /status, /result, /error
+// Sensor topics: {prefix}/speed-cal/{name}/arm, /stop, /status, /result, /error
+// Throttle topics: {prefix}/speed-cal/throttle/acquire, /speed, /direction, etc.
+#define THROTTLE_TOPIC_NAME   "throttle"
 
 // --- Web server ---
 #define WS_PATH           "/ws"

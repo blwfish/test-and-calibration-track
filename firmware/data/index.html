@@ -33,9 +33,10 @@
   button:active { transform: scale(0.97); }
   .btn-arm { background: #e94560; color: white; }
   .btn-arm:hover { background: #d63851; }
-  .btn-arm:disabled { background: #555; cursor: not-allowed; }
+  .btn-arm:disabled { background: #555; cursor: not-allowed; color: #888; }
   .btn-disarm { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560; }
   .btn-disarm:hover { background: #1a4a7a; }
+  .btn-disarm:disabled { background: #0a1e3a; color: #555; cursor: not-allowed; border-color: #333; }
   .sensors {
     display: flex; gap: 6px; justify-content: center; margin: 12px 0;
   }
@@ -102,6 +103,76 @@
   .reading-item { flex: 1; }
   .reading-val { font-size: 1.3em; font-weight: 600; color: #4fc3f7; }
   .reading-lbl { font-size: 0.75em; color: #888; }
+
+  /* --- Throttle card --- */
+  .throttle-status { font-size: 0.85em; color: #888; margin-bottom: 10px; }
+  .addr-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .addr-row input {
+    width: 100px; padding: 8px; border-radius: 4px;
+    border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
+    font-size: 1em; text-align: center;
+  }
+  .speed-section { margin: 12px 0; }
+  .speed-display {
+    text-align: center; font-size: 2em; font-weight: 700;
+    color: #4fc3f7; margin-bottom: 4px;
+  }
+  .speed-display .speed-pct {
+    font-size: 0.5em; color: #888; font-weight: 400;
+  }
+  .speed-slider {
+    width: 100%; -webkit-appearance: none; appearance: none;
+    height: 8px; border-radius: 4px; background: #0f3460;
+    outline: none; margin: 8px 0;
+  }
+  .speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #4fc3f7; cursor: pointer; border: 2px solid #16213e;
+  }
+  .speed-slider::-moz-range-thumb {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #4fc3f7; cursor: pointer; border: 2px solid #16213e;
+  }
+  .speed-slider:disabled { opacity: 0.4; cursor: not-allowed; }
+  .speed-slider:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+  .speed-labels {
+    display: flex; justify-content: space-between;
+    font-size: 0.75em; color: #555;
+  }
+  .dir-row { display: flex; gap: 8px; margin: 12px 0; }
+  .dir-row button { font-size: 1.1em; padding: 14px; }
+  .btn-fwd { background: #0f3460; color: #4fc3f7; border: 2px solid #4fc3f7; }
+  .btn-fwd:hover { background: #1a4a7a; }
+  .btn-fwd.active { background: #4fc3f7; color: #16213e; }
+  .btn-rev { background: #0f3460; color: #f5a623; border: 2px solid #f5a623; }
+  .btn-rev:hover { background: #1a4a7a; }
+  .btn-rev.active { background: #f5a623; color: #16213e; }
+  .btn-stop { background: #0f3460; color: #e0e0e0; border: 2px solid #666; }
+  .btn-stop:hover { background: #1a4a7a; }
+  .btn-estop {
+    background: #c0392b; color: white; border: 2px solid #e74c3c;
+    font-size: 1.2em; padding: 16px; letter-spacing: 1px;
+    text-transform: uppercase; width: 100%; margin-top: 8px;
+  }
+  .btn-estop:hover { background: #e74c3c; }
+  .fn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .btn-fn {
+    flex: 0 0 auto; min-width: 52px; padding: 8px 12px;
+    background: #0f3460; color: #888; border: 1px solid #333;
+    font-size: 0.85em; border-radius: 6px;
+  }
+  .btn-fn:hover { background: #1a4a7a; }
+  .btn-fn.active { background: #e94560; color: white; border-color: #e94560; }
+  .btn-fn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* Settings */
+  details.settings { margin-top: 12px; }
+  details.settings summary {
+    cursor: pointer; color: #888; font-size: 0.9em;
+    padding: 12px 0; user-select: none;
+  }
+  details.settings summary:hover { color: #e0e0e0; }
 </style>
 </head>
 <body>
@@ -112,9 +183,40 @@
   <span id="connText">Connecting...</span>
 </div>
 
-<!-- Status card -->
+<!-- Locomotive Control -->
 <div class="card">
-  <h2>Status</h2>
+  <h2>Locomotive Control</h2>
+  <div class="throttle-status">
+    <span class="conn-dot disconnected" id="bridgeDot"></span>
+    <span id="bridgeStatus">No bridge</span>
+  </div>
+  <div class="addr-row">
+    <input type="number" id="addrInput" placeholder="Addr" min="1" max="9999" value="">
+    <button class="btn-arm" style="flex:1" onclick="doAcquire()">Acquire</button>
+    <button class="btn-disarm" style="flex:1" onclick="doRelease()">Release</button>
+  </div>
+  <div class="speed-section">
+    <div class="speed-display">
+      <span id="speedStep">0</span><span>/126</span>
+      <span class="speed-pct" id="speedPct">(0%)</span>
+    </div>
+    <input type="range" class="speed-slider" id="speedSlider"
+           min="0" max="126" value="0" disabled
+           oninput="onSpeedInput(this.value)">
+    <div class="speed-labels"><span>0</span><span>63</span><span>126</span></div>
+  </div>
+  <div class="dir-row">
+    <button class="btn-rev" id="btnRev" disabled onclick="doReverse()">&#9664; REV</button>
+    <button class="btn-stop" id="btnThrottleStop" disabled onclick="doThrottleStop()">&#9632; STOP</button>
+    <button class="btn-fwd active" id="btnFwd" disabled onclick="doForward()">FWD &#9654;</button>
+  </div>
+  <button class="btn-estop" onclick="doEstop()">E-STOP</button>
+  <div class="fn-row" id="fnRow"></div>
+</div>
+
+<!-- Sensors -->
+<div class="card">
+  <h2>Sensors</h2>
   <div class="status-row">
     <span class="status-label">State</span>
     <span class="status-value state-idle" id="state">idle</span>
@@ -130,7 +232,7 @@
   </div>
 </div>
 
-<!-- Result card -->
+<!-- Last Run -->
 <div class="card hidden" id="resultCard">
   <h2>Last Run</h2>
   <div class="result-speed" id="avgSpeed">--</div>
@@ -144,7 +246,7 @@
   </div>
 </div>
 
-<!-- Load Cell card -->
+<!-- Load Cell -->
 <div class="card">
   <h2>Load Cell</h2>
   <div class="reading-big" id="loadValue">--</div>
@@ -163,7 +265,7 @@
   </div>
 </div>
 
-<!-- Vibration card -->
+<!-- Vibration -->
 <div class="card">
   <h2>Vibration</h2>
   <div class="reading-row">
@@ -182,7 +284,7 @@
   </div>
 </div>
 
-<!-- Audio card -->
+<!-- Audio -->
 <div class="card">
   <h2>Audio</h2>
   <div class="reading-row">
@@ -201,51 +303,59 @@
   </div>
 </div>
 
-<!-- Log card -->
+<!-- Log -->
 <div class="card">
   <h2>Log</h2>
   <div class="log" id="log"></div>
 </div>
 
-<!-- WiFi card -->
-<div class="card config-card">
-  <h2>WiFi</h2>
-  <div class="config-status" id="wifiStatus">--</div>
-  <select id="ssidSelect" onchange="document.getElementById('ssidInput').value=this.value">
-    <option value="">Scan for networks...</option>
-  </select>
-  <input type="text" id="ssidInput" placeholder="SSID">
-  <input type="password" id="passInput" placeholder="Password">
-  <div class="btn-row">
-    <button class="btn-arm" onclick="wifiConnect()">Connect</button>
-    <button class="btn-disarm" onclick="wifiScan()">Scan</button>
-    <button class="btn-disarm" onclick="wifiDisconnect()">Reset to AP</button>
+<!-- Settings -->
+<details class="settings">
+  <summary>Settings</summary>
+  <div class="card config-card">
+    <h2>WiFi</h2>
+    <div class="config-status" id="wifiStatus">--</div>
+    <select id="ssidSelect" onchange="document.getElementById('ssidInput').value=this.value">
+      <option value="">Scan for networks...</option>
+    </select>
+    <input type="text" id="ssidInput" placeholder="SSID">
+    <input type="password" id="passInput" placeholder="Password">
+    <div class="btn-row">
+      <button class="btn-arm" onclick="wifiConnect()">Connect</button>
+      <button class="btn-disarm" onclick="wifiScan()">Scan</button>
+      <button class="btn-disarm" onclick="wifiDisconnect()">Reset to AP</button>
+    </div>
   </div>
-</div>
-
-<!-- MQTT card -->
-<div class="card config-card">
-  <h2>MQTT</h2>
-  <div class="config-status">
-    <span class="conn-dot disconnected" id="mqttDot"></span>
-    <span id="mqttStatus">Not configured</span>
+  <div class="card config-card">
+    <h2>MQTT</h2>
+    <div class="config-status">
+      <span class="conn-dot disconnected" id="mqttDot"></span>
+      <span id="mqttStatus">Not configured</span>
+    </div>
+    <label>Broker (IP or hostname)</label>
+    <input type="text" id="mqttBroker" placeholder="e.g. 192.168.1.100">
+    <label>Topic prefix</label>
+    <input type="text" id="mqttPrefix" placeholder="/cova">
+    <label>Device name</label>
+    <input type="text" id="mqttName" placeholder="speed-cal">
+    <div class="btn-row">
+      <button class="btn-arm" onclick="mqttSave()">Save</button>
+      <button class="btn-disarm" onclick="mqttLoad()">Reload</button>
+    </div>
   </div>
-  <label>Broker (IP or hostname)</label>
-  <input type="text" id="mqttBroker" placeholder="e.g. 192.168.1.100">
-  <label>Topic prefix</label>
-  <input type="text" id="mqttPrefix" placeholder="/cova">
-  <label>Device name</label>
-  <input type="text" id="mqttName" placeholder="speed-cal">
-  <div class="btn-row">
-    <button class="btn-arm" onclick="mqttSave()">Save</button>
-    <button class="btn-disarm" onclick="mqttLoad()">Reload</button>
-  </div>
-</div>
+</details>
 
 <script>
 let ws;
 let reconnTimer;
 const MAX_LOG = 50;
+
+// Throttle state
+let throttleAcquired = false;
+let throttleAddress = 0;
+let throttleForward = true;
+let fnState = {};
+let speedDebounce = null;
 
 function log(msg, cls='') {
   const el = document.getElementById('log');
@@ -264,6 +374,101 @@ function sendCmd(action) {
   }
 }
 
+function sendJson(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+// --- Throttle ---
+
+function updateThrottleUI() {
+  const en = throttleAcquired;
+  document.getElementById('speedSlider').disabled = !en;
+  document.getElementById('btnFwd').disabled = !en;
+  document.getElementById('btnRev').disabled = !en;
+  document.getElementById('btnThrottleStop').disabled = !en;
+  document.querySelectorAll('.btn-fn').forEach(b => b.disabled = !en);
+  document.getElementById('btnFwd').classList.toggle('active', throttleForward);
+  document.getElementById('btnRev').classList.toggle('active', !throttleForward);
+}
+
+function doAcquire() {
+  const addr = parseInt(document.getElementById('addrInput').value);
+  if (!addr || addr < 1) { log('Enter a valid DCC address', 'error'); return; }
+  sendJson({action: 'acquire', address: addr});
+  log('Acquiring throttle for ' + addr + '...');
+}
+
+function doRelease() {
+  sendJson({action: 'release'});
+  throttleAcquired = false;
+  throttleAddress = 0;
+  document.getElementById('speedSlider').value = 0;
+  document.getElementById('speedStep').textContent = '0';
+  document.getElementById('speedPct').textContent = '(0%)';
+  updateThrottleUI();
+}
+
+function onSpeedInput(val) {
+  const step = parseInt(val);
+  document.getElementById('speedStep').textContent = step;
+  document.getElementById('speedPct').textContent = '(' + Math.round(step / 1.26) + '%)';
+  if (speedDebounce) clearTimeout(speedDebounce);
+  speedDebounce = setTimeout(() => {
+    sendJson({action: 'throttle_speed', value: step / 126.0});
+  }, 80);
+}
+
+function doForward() {
+  sendJson({action: 'forward'});
+  throttleForward = true;
+  updateThrottleUI();
+}
+
+function doReverse() {
+  sendJson({action: 'reverse'});
+  throttleForward = false;
+  updateThrottleUI();
+}
+
+function doThrottleStop() {
+  sendJson({action: 'throttle_stop'});
+  document.getElementById('speedSlider').value = 0;
+  document.getElementById('speedStep').textContent = '0';
+  document.getElementById('speedPct').textContent = '(0%)';
+}
+
+function doEstop() {
+  sendJson({action: 'estop'});
+  document.getElementById('speedSlider').value = 0;
+  document.getElementById('speedStep').textContent = '0';
+  document.getElementById('speedPct').textContent = '(0%)';
+  log('E-STOP!', 'error');
+}
+
+function toggleFn(num) {
+  fnState[num] = !fnState[num];
+  sendJson({action: 'function', num: num, state: fnState[num]});
+  document.getElementById('fn' + num).classList.toggle('active', fnState[num]);
+}
+
+function buildFnButtons() {
+  const row = document.getElementById('fnRow');
+  for (let i = 0; i <= 8; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'btn-fn';
+    btn.id = 'fn' + i;
+    btn.disabled = true;
+    btn.textContent = 'F' + i;
+    btn.onclick = () => toggleFn(i);
+    fnState[i] = false;
+    row.appendChild(btn);
+  }
+}
+
+// --- Sensors ---
+
 function updateState(state) {
   const el = document.getElementById('state');
   el.textContent = state;
@@ -272,13 +477,13 @@ function updateState(state) {
 }
 
 function updateSensorDots(count, triggered) {
-  const container = document.getElementById('sensorDots');
-  container.innerHTML = '';
+  const c = document.getElementById('sensorDots');
+  c.innerHTML = '';
   for (let i = 0; i < count; i++) {
     const dot = document.createElement('div');
     dot.className = 'sensor-dot' + (triggered && triggered[i] ? ' triggered' : '');
     dot.textContent = 'S' + i;
-    container.appendChild(dot);
+    c.appendChild(dot);
   }
 }
 
@@ -290,13 +495,11 @@ function showResult(d) {
     'Sensors: ' + d.sensors_triggered + ' / ' + document.getElementById('sensorDots').children.length;
   document.getElementById('resultDuration').textContent =
     'Duration: ' + (d.duration_ms ? d.duration_ms.toFixed(1) + ' ms' : '--');
-
-  // Interval speed bars
   const bars = document.getElementById('intervalBars');
   bars.innerHTML = '';
   if (d.speeds_mph && d.speeds_mph.length > 0) {
     const max = Math.max(...d.speeds_mph.map(Number));
-    d.speeds_mph.forEach((v, i) => {
+    d.speeds_mph.forEach((v) => {
       const pct = max > 0 ? (Number(v) / max * 60 + 10) : 10;
       const bar = document.createElement('div');
       bar.className = 'interval-bar';
@@ -306,13 +509,15 @@ function showResult(d) {
       bars.appendChild(bar);
     });
   }
-
   updateSensorDots(d.triggered ? d.triggered.length : 0, d.triggered);
 }
+
+// --- Messages ---
 
 function handleMessage(msg) {
   try {
     const d = JSON.parse(msg);
+
     if (d.type === 'status') {
       updateState(d.state);
       document.getElementById('sensorInfo').textContent =
@@ -320,7 +525,7 @@ function handleMessage(msg) {
       document.getElementById('wifiStatus').textContent =
         d.wifi_mode + ' | ' + d.ssid + ' | ' + d.ip;
       updateSensorDots(d.sensors, null);
-      // Update MQTT status
+      // MQTT
       const mqttDot = document.getElementById('mqttDot');
       const mqttStat = document.getElementById('mqttStatus');
       if (d.mqtt_broker && d.mqtt_broker.length > 0) {
@@ -331,21 +536,76 @@ function handleMessage(msg) {
         mqttDot.className = 'conn-dot disconnected';
         mqttStat.textContent = 'Not configured';
       }
+      // Throttle from status
+      if ('throttle_acquired' in d) {
+        throttleAcquired = d.throttle_acquired;
+        throttleAddress = d.throttle_address;
+        throttleForward = d.throttle_forward;
+        if (d.throttle_address > 0)
+          document.getElementById('addrInput').value = d.throttle_address;
+        updateThrottleUI();
+      }
+
     } else if (d.type === 'result') {
       showResult(d);
       log('Run: ' + (d.avg_speed_mph || '?') + ' mph ' + (d.direction || ''), 'result');
       updateState('complete');
+
+    } else if (d.type === 'throttle') {
+      throttleAcquired = d.acquired;
+      throttleAddress = d.address;
+      throttleForward = d.forward;
+      const st = d.status || '';
+      const dot = document.getElementById('bridgeDot');
+      const txt = document.getElementById('bridgeStatus');
+      if (d.acquired) {
+        dot.className = 'conn-dot connected';
+        txt.textContent = 'Addr ' + d.address + (d.forward ? ' Fwd' : ' Rev');
+        document.getElementById('addrInput').value = d.address;
+      } else if (st === 'READY') {
+        dot.className = 'conn-dot connected';
+        txt.textContent = 'Bridge ready';
+      } else if (st.startsWith('ERROR') || st.startsWith('FAILED')) {
+        dot.className = 'conn-dot disconnected';
+        txt.textContent = st;
+        log('Bridge: ' + st, 'error');
+      } else if (st.startsWith('ACQUIRING')) {
+        dot.className = 'conn-dot ws-connecting';
+        txt.textContent = st + '...';
+      } else {
+        dot.className = 'conn-dot disconnected';
+        txt.textContent = st || 'No bridge';
+      }
+      // Speed ack
+      if (st.startsWith('SPEED ')) {
+        const spd = parseFloat(st.substring(6));
+        const step = Math.round(spd * 126);
+        document.getElementById('speedSlider').value = step;
+        document.getElementById('speedStep').textContent = step;
+        document.getElementById('speedPct').textContent = '(' + Math.round(step / 1.26) + '%)';
+      }
+      if (st === 'STOPPED' || st === 'ESTOPPED') {
+        document.getElementById('speedSlider').value = 0;
+        document.getElementById('speedStep').textContent = '0';
+        document.getElementById('speedPct').textContent = '(0%)';
+      }
+      updateThrottleUI();
+      if (st && st !== 'READY' && !st.startsWith('SPEED'))
+        log('Bridge: ' + st);
+
     } else if (d.type === 'load') {
       document.getElementById('loadValue').textContent = d.grams || '--';
       document.getElementById('loadRaw').textContent = d.raw || '--';
       document.getElementById('loadTared').textContent = d.tared ? 'yes' : 'no';
       log('Load: ' + (d.grams || '?') + ' g');
+
     } else if (d.type === 'vibration') {
       document.getElementById('vibPP').textContent = d.peak_to_peak || '--';
       document.getElementById('vibRMS').textContent = d.rms || '--';
       document.getElementById('vibInfo').textContent =
         d.samples + ' samples / ' + d.duration_ms + ' ms';
       log('Vibration: p2p=' + d.peak_to_peak + ' rms=' + d.rms);
+
     } else if (d.type === 'audio') {
       document.getElementById('audioRMS').textContent = d.rms_db || '--';
       document.getElementById('audioPeak').textContent = d.peak_db || '--';
@@ -358,10 +618,11 @@ function handleMessage(msg) {
   }
 }
 
+// --- WebSocket ---
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
-
   ws.onopen = () => {
     document.getElementById('connDot').className = 'conn-dot connected';
     document.getElementById('connText').textContent = 'Connected';
@@ -369,29 +630,20 @@ function connect() {
     sendCmd('status');
     if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
   };
-
   ws.onmessage = (e) => handleMessage(e.data);
-
   ws.onclose = () => {
     document.getElementById('connDot').className = 'conn-dot disconnected';
     document.getElementById('connText').textContent = 'Disconnected';
     log('WebSocket disconnected', 'error');
     reconnTimer = setTimeout(connect, 2000);
   };
-
-  ws.onerror = () => {
-    ws.close();
-  };
+  ws.onerror = () => { ws.close(); };
 }
 
-// WiFi management
+// --- WiFi ---
 function wifiScan() {
   fetch('/api/wifi/scan').then(r => r.json()).then(d => {
-    if (d.scanning) {
-      setTimeout(wifiScan, 2000);
-      log('Scanning...');
-      return;
-    }
+    if (d.scanning) { setTimeout(wifiScan, 2000); log('Scanning...'); return; }
     const sel = document.getElementById('ssidSelect');
     sel.innerHTML = '<option value="">Select network...</option>';
     (d.networks || []).forEach(n => {
@@ -403,26 +655,23 @@ function wifiScan() {
     log('Found ' + (d.networks || []).length + ' networks');
   }).catch(e => log('Scan error: ' + e, 'error'));
 }
-
 function wifiConnect() {
   const ssid = document.getElementById('ssidInput').value;
   const pass = document.getElementById('passInput').value;
   if (!ssid) { log('Enter an SSID', 'error'); return; }
   fetch('/api/wifi/connect', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ssid, password: pass})
   }).then(() => log('Connecting to ' + ssid + '... device will reboot'))
     .catch(e => log('Connect error: ' + e, 'error'));
 }
-
 function wifiDisconnect() {
   fetch('/api/wifi/disconnect', {method: 'POST'})
     .then(() => log('Resetting to AP mode... device will reboot'))
     .catch(e => log('Error: ' + e, 'error'));
 }
 
-// MQTT management
+// --- MQTT ---
 function mqttLoad() {
   fetch('/api/mqtt').then(r => r.json()).then(d => {
     document.getElementById('mqttBroker').value = d.broker || '';
@@ -432,8 +681,7 @@ function mqttLoad() {
     const mqttStat = document.getElementById('mqttStatus');
     if (d.broker && d.broker.length > 0) {
       mqttDot.className = 'conn-dot ' + (d.connected ? 'connected' : 'disconnected');
-      mqttStat.textContent = (d.connected ? 'Connected' : 'Disconnected') +
-        ' | ' + d.broker;
+      mqttStat.textContent = (d.connected ? 'Connected' : 'Disconnected') + ' | ' + d.broker;
     } else {
       mqttDot.className = 'conn-dot disconnected';
       mqttStat.textContent = 'Not configured';
@@ -441,25 +689,21 @@ function mqttLoad() {
     log('MQTT config loaded');
   }).catch(e => log('MQTT load error: ' + e, 'error'));
 }
-
 function mqttSave() {
   const broker = document.getElementById('mqttBroker').value.trim();
   const prefix = document.getElementById('mqttPrefix').value.trim();
   const name = document.getElementById('mqttName').value.trim();
   fetch('/api/mqtt', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({broker, prefix, name})
   }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      log('MQTT config saved. Broker=' + broker);
-    } else {
-      log('MQTT save error: ' + (d.error || 'unknown'), 'error');
-    }
+    if (d.ok) log('MQTT config saved. Broker=' + broker);
+    else log('MQTT save error: ' + (d.error || 'unknown'), 'error');
   }).catch(e => log('MQTT save error: ' + e, 'error'));
 }
 
-// Init
+// --- Init ---
+buildFnButtons();
 connect();
 mqttLoad();
 </script>
