@@ -3,6 +3,7 @@
 #include "sensor_array.h"
 #include "speed_calc.h"
 #include "wifi_manager.h"
+#include "mqtt_manager.h"
 
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -64,6 +65,10 @@ static String buildStatusJson() {
     doc["wifi_mode"] = wifi_is_sta() ? "STA" : "AP";
     doc["ip"] = wifi_get_ip();
     doc["ssid"] = wifi_get_ssid();
+    doc["mqtt_connected"] = mqtt_is_connected();
+    doc["mqtt_broker"] = mqtt_get_broker();
+    doc["mqtt_prefix"] = mqtt_get_prefix();
+    doc["mqtt_name"] = mqtt_get_name();
     doc["uptime_ms"] = millis();
 
     if (sensor_get_state() == STATE_MEASURING) {
@@ -124,11 +129,13 @@ static String buildResultJson() {
 void web_send_status() {
     String json = buildStatusJson();
     ws.textAll(json);
+    mqtt_publish_status(json);
 }
 
 void web_send_result() {
     String json = buildResultJson();
     ws.textAll(json);
+    mqtt_publish_result(json);
     // Also print to serial for debugging
     Serial.println(json);
 }
@@ -172,7 +179,7 @@ void web_init() {
 
     // REST API: WiFi connect
     server.on("/api/wifi/connect", HTTP_POST,
-        [](AsyncWebServerRequest* req) {},  // no body handler needed
+        [](AsyncWebServerRequest* req) {},
         NULL,
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
             JsonDocument doc;
@@ -207,6 +214,36 @@ void web_init() {
         serializeJson(doc, json);
         req->send(200, "application/json", json);
     });
+
+    // REST API: MQTT config - GET
+    server.on("/api/mqtt", HTTP_GET, [](AsyncWebServerRequest* req) {
+        JsonDocument doc;
+        doc["broker"] = mqtt_get_broker();
+        doc["prefix"] = mqtt_get_prefix();
+        doc["name"] = mqtt_get_name();
+        doc["connected"] = mqtt_is_connected();
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
+
+    // REST API: MQTT config - POST
+    server.on("/api/mqtt", HTTP_POST,
+        [](AsyncWebServerRequest* req) {},
+        NULL,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            JsonDocument doc;
+            if (deserializeJson(doc, data, len) == DeserializationError::Ok) {
+                String broker = doc["broker"] | "";
+                String prefix = doc["prefix"] | MQTT_DEFAULT_PREFIX;
+                String name = doc["name"] | MQTT_DEFAULT_NAME;
+                mqtt_configure(broker, prefix, name);
+                req->send(200, "application/json", "{\"ok\":true}");
+            } else {
+                req->send(400, "application/json", "{\"error\":\"bad json\"}");
+            }
+        }
+    );
 
     // REST API: sensor status
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {

@@ -67,15 +67,18 @@
     min-height: 4px; transition: height 0.3s;
   }
   .hidden { display: none; }
-  .wifi-card input {
+  .config-card input {
     width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px;
     border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
   }
-  .wifi-card select {
+  .config-card select {
     width: 100%; padding: 8px; margin: 4px 0; border-radius: 4px;
     border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
   }
-  .wifi-status { font-size: 0.85em; color: #888; margin-bottom: 8px; }
+  .config-card label {
+    font-size: 0.8em; color: #888; margin-top: 6px; display: block;
+  }
+  .config-status { font-size: 0.85em; color: #888; margin-bottom: 8px; }
   .conn-dot {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 6px;
@@ -139,9 +142,9 @@
 </div>
 
 <!-- WiFi card -->
-<div class="card wifi-card">
+<div class="card config-card">
   <h2>WiFi</h2>
-  <div class="wifi-status" id="wifiStatus">--</div>
+  <div class="config-status" id="wifiStatus">--</div>
   <select id="ssidSelect" onchange="document.getElementById('ssidInput').value=this.value">
     <option value="">Scan for networks...</option>
   </select>
@@ -151,6 +154,25 @@
     <button class="btn-arm" onclick="wifiConnect()">Connect</button>
     <button class="btn-disarm" onclick="wifiScan()">Scan</button>
     <button class="btn-disarm" onclick="wifiDisconnect()">Reset to AP</button>
+  </div>
+</div>
+
+<!-- MQTT card -->
+<div class="card config-card">
+  <h2>MQTT</h2>
+  <div class="config-status">
+    <span class="conn-dot disconnected" id="mqttDot"></span>
+    <span id="mqttStatus">Not configured</span>
+  </div>
+  <label>Broker (IP or hostname)</label>
+  <input type="text" id="mqttBroker" placeholder="e.g. 192.168.1.100">
+  <label>Topic prefix</label>
+  <input type="text" id="mqttPrefix" placeholder="/cova">
+  <label>Device name</label>
+  <input type="text" id="mqttName" placeholder="speed-cal">
+  <div class="btn-row">
+    <button class="btn-arm" onclick="mqttSave()">Save</button>
+    <button class="btn-disarm" onclick="mqttLoad()">Reload</button>
   </div>
 </div>
 
@@ -232,6 +254,17 @@ function handleMessage(msg) {
       document.getElementById('wifiStatus').textContent =
         d.wifi_mode + ' | ' + d.ssid + ' | ' + d.ip;
       updateSensorDots(d.sensors, null);
+      // Update MQTT status
+      const mqttDot = document.getElementById('mqttDot');
+      const mqttStat = document.getElementById('mqttStatus');
+      if (d.mqtt_broker && d.mqtt_broker.length > 0) {
+        mqttDot.className = 'conn-dot ' + (d.mqtt_connected ? 'connected' : 'disconnected');
+        mqttStat.textContent = (d.mqtt_connected ? 'Connected' : 'Disconnected') +
+          ' | ' + d.mqtt_broker;
+      } else {
+        mqttDot.className = 'conn-dot disconnected';
+        mqttStat.textContent = 'Not configured';
+      }
     } else if (d.type === 'result') {
       showResult(d);
       log('Run: ' + (d.avg_speed_mph || '?') + ' mph ' + (d.direction || ''), 'result');
@@ -306,8 +339,46 @@ function wifiDisconnect() {
     .catch(e => log('Error: ' + e, 'error'));
 }
 
+// MQTT management
+function mqttLoad() {
+  fetch('/api/mqtt').then(r => r.json()).then(d => {
+    document.getElementById('mqttBroker').value = d.broker || '';
+    document.getElementById('mqttPrefix').value = d.prefix || '';
+    document.getElementById('mqttName').value = d.name || '';
+    const mqttDot = document.getElementById('mqttDot');
+    const mqttStat = document.getElementById('mqttStatus');
+    if (d.broker && d.broker.length > 0) {
+      mqttDot.className = 'conn-dot ' + (d.connected ? 'connected' : 'disconnected');
+      mqttStat.textContent = (d.connected ? 'Connected' : 'Disconnected') +
+        ' | ' + d.broker;
+    } else {
+      mqttDot.className = 'conn-dot disconnected';
+      mqttStat.textContent = 'Not configured';
+    }
+    log('MQTT config loaded');
+  }).catch(e => log('MQTT load error: ' + e, 'error'));
+}
+
+function mqttSave() {
+  const broker = document.getElementById('mqttBroker').value.trim();
+  const prefix = document.getElementById('mqttPrefix').value.trim();
+  const name = document.getElementById('mqttName').value.trim();
+  fetch('/api/mqtt', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({broker, prefix, name})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      log('MQTT config saved. Broker=' + broker);
+    } else {
+      log('MQTT save error: ' + (d.error || 'unknown'), 'error');
+    }
+  }).catch(e => log('MQTT save error: ' + e, 'error'));
+}
+
 // Init
 connect();
+mqttLoad();
 </script>
 </body>
 </html>

@@ -6,6 +6,7 @@
 #include "speed_calc.h"
 #include "wifi_manager.h"
 #include "web_server.h"
+#include "mqtt_manager.h"
 
 // Serial command buffer
 static char cmdBuf[32];
@@ -29,6 +30,7 @@ static void printStatus() {
         const RunResult& r = sensor_get_result();
         Serial.printf("Sensors triggered: %d / %d\n", r.sensorsTriggered, NUM_SENSORS);
     }
+    Serial.printf("MQTT: %s\n", mqtt_is_connected() ? "connected" : "disconnected");
 }
 
 static void readSensors() {
@@ -67,7 +69,7 @@ void setup() {
 
     Serial.println();
     Serial.println("================================");
-    Serial.println("Speed Calibration Track v0.2");
+    Serial.println("Speed Calibration Track v0.3");
     Serial.printf("Sensors: %d @ %dmm spacing\n", NUM_SENSORS, (int)SENSOR_SPACING_MM);
     Serial.println("================================");
 
@@ -114,6 +116,9 @@ void setup() {
     // Start WiFi
     wifi_init();
 
+    // Start MQTT
+    mqtt_init();
+
     // Start web server
     web_init();
 
@@ -125,6 +130,9 @@ void setup() {
 void loop() {
     // WiFi housekeeping (DNS for captive portal)
     wifi_process();
+
+    // MQTT housekeeping (reconnect, process incoming)
+    mqtt_process();
 
     // Process serial commands
     while (Serial.available()) {
@@ -161,7 +169,7 @@ void loop() {
             }
         }
 
-        // Send result to web clients
+        // Send result to web clients and MQTT
         web_send_result();
 
         Serial.println("Type 'arm' to measure again.");

@@ -50,6 +50,15 @@
 #define WIFI_STA_TIMEOUT  10000   // ms to wait for STA connection
 #define WIFI_NVS_NAMESPACE "wifi"
 
+// --- MQTT ---
+#define MQTT_PORT             1883
+#define MQTT_BUFFER_SIZE      2048
+#define MQTT_NVS_NAMESPACE    "mqtt"
+#define MQTT_DEFAULT_PREFIX   "/cova"
+#define MQTT_DEFAULT_NAME     "speed-cal"
+#define MQTT_RECONNECT_MS     5000    // Retry interval on disconnect
+// Topics: {prefix}/speed-cal/{name}/arm, /stop, /status, /result, /error
+
 // --- Web server ---
 #define WS_PATH           "/ws"
 #define HTTP_PORT         80
