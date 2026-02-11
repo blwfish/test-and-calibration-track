@@ -23,3 +23,9 @@ void web_send_audio();
 
 // Send throttle bridge status to WebSocket clients.
 void web_send_throttle_status();
+
+// Send pull test results to WebSocket clients and MQTT.
+void web_send_pull_test();
+
+// Send pull test progress to WebSocket clients.
+void web_send_pull_progress();

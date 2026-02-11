@@ -256,6 +256,12 @@ void mqtt_publish_audio(const String& json) {
     }
 }
 
+void mqtt_publish_pull_test(const String& json) {
+    if (mqttClient.connected()) {
+        mqttClient.publish(buildTopic("pull_test").c_str(), json.c_str());
+    }
+}
+
 // --- Throttle bridge relay ---
 
 void mqtt_publish_throttle(const char* suffix, const String& payload) {

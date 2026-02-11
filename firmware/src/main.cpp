@@ -10,6 +10,7 @@
 #include "load_cell.h"
 #include "vibration.h"
 #include "audio_capture.h"
+#include "pull_test.h"
 
 // Serial command buffer
 static char cmdBuf[32];
@@ -182,6 +183,24 @@ void loop() {
     audio_process();
     if (audioWasCapturing && !audio_is_capturing()) {
         web_send_audio();
+    }
+
+    // Pull test state machine
+    bool pullWasRunning = pull_test_is_running();
+    pull_test_process();
+    if (pullWasRunning && !pull_test_is_running()) {
+        web_send_pull_test();
+    }
+    // Send progress updates during pull test (throttled by state machine timing)
+    static int lastPullStep = -1;
+    if (pull_test_is_running()) {
+        int curStep = pull_test_current_step_num();
+        if (curStep != lastPullStep) {
+            lastPullStep = curStep;
+            web_send_pull_progress();
+        }
+    } else {
+        lastPullStep = -1;
     }
 
     // Process serial commands

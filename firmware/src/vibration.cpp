@@ -114,6 +114,14 @@ bool vibration_has_result() {
     return hasResult;
 }
 
+uint16_t vibration_get_peak_to_peak() {
+    return resultPeakToPeak;
+}
+
+float vibration_get_rms() {
+    return resultRms;
+}
+
 String vibration_build_json() {
     JsonDocument doc;
     doc["type"] = "vibration";

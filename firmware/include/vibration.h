@@ -20,6 +20,10 @@ bool vibration_has_result();
 // Build JSON string with analysis results.
 String vibration_build_json();
 
+// Get cached result values (valid after capture completes).
+uint16_t vibration_get_peak_to_peak();
+float vibration_get_rms();
+
 // --- Analysis functions (exposed for unit testing) ---
 
 // Compute peak-to-peak from a sample buffer.

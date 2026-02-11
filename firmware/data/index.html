@@ -104,6 +104,34 @@
   .reading-val { font-size: 1.3em; font-weight: 600; color: #4fc3f7; }
   .reading-lbl { font-size: 0.75em; color: #888; }
 
+  /* --- Pull test --- */
+  .pull-config { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .pull-config label { font-size: 0.8em; color: #888; white-space: nowrap; }
+  .pull-config input {
+    width: 70px; padding: 6px; border-radius: 4px; text-align: center;
+    border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0;
+  }
+  .pull-progress { margin: 10px 0; }
+  .pull-progress-text { font-size: 0.85em; color: #888; margin-bottom: 4px; }
+  .progress-bar {
+    height: 8px; background: #0f3460; border-radius: 4px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: #4fc3f7; border-radius: 4px;
+    transition: width 0.3s;
+  }
+  .pull-results { margin-top: 10px; max-height: 200px; overflow-y: auto; }
+  .pull-results table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
+  .pull-results th {
+    text-align: left; color: #888; padding: 4px 8px;
+    border-bottom: 1px solid #0f3460;
+  }
+  .pull-results td { padding: 3px 8px; color: #e0e0e0; }
+  .pull-results tr.peak td { color: #e94560; font-weight: 600; }
+  .section-divider {
+    border: none; border-top: 1px solid #0f3460; margin: 12px 0;
+  }
+
   /* --- Throttle card --- */
   .throttle-status { font-size: 0.85em; color: #888; margin-bottom: 10px; }
   .addr-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
@@ -246,11 +274,19 @@
   </div>
 </div>
 
-<!-- Load Cell -->
+<!-- Drawbar Pull -->
 <div class="card">
-  <h2>Load Cell</h2>
-  <div class="reading-big" id="loadValue">--</div>
-  <div class="reading-unit">grams (drawbar pull)</div>
+  <h2>Drawbar Pull</h2>
+  <div class="reading-row">
+    <div class="reading-item">
+      <div class="reading-val" id="loadValue">--</div>
+      <div class="reading-lbl">Current (g)</div>
+    </div>
+    <div class="reading-item">
+      <div class="reading-val" id="pullPeak">--</div>
+      <div class="reading-lbl">Peak (g)</div>
+    </div>
+  </div>
   <div class="status-row">
     <span class="status-label">Raw ADC</span>
     <span class="status-value" id="loadRaw">--</span>
@@ -262,6 +298,33 @@
   <div class="btn-row">
     <button class="btn-arm" onclick="sendCmd('tare')">Tare</button>
     <button class="btn-disarm" onclick="sendCmd('load')">Read</button>
+  </div>
+
+  <hr class="section-divider">
+  <div style="font-size:0.9em;color:#e94560;font-weight:600;margin-bottom:8px;">Pull + Vibration Sweep</div>
+
+  <div class="pull-config">
+    <label>Step inc:</label>
+    <input type="number" id="pullStepInc" value="5" min="1" max="126">
+    <label>Settle (s):</label>
+    <input type="number" id="pullSettle" value="3.0" min="0.5" max="30" step="0.5">
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-arm" id="btnPullStart" onclick="pullTestStart()">Start Pull Test</button>
+    <button class="btn-disarm" id="btnPullStop" onclick="pullTestAbort()" disabled>Stop</button>
+  </div>
+
+  <div class="pull-progress hidden" id="pullProgress">
+    <div class="pull-progress-text" id="pullProgressText">--</div>
+    <div class="progress-bar"><div class="progress-fill" id="pullProgressBar" style="width:0%"></div></div>
+  </div>
+
+  <div class="pull-results hidden" id="pullResults">
+    <table>
+      <thead><tr><th>Step</th><th>Throttle</th><th>Pull (g)</th><th>Vib P2P</th><th>Vib RMS</th></tr></thead>
+      <tbody id="pullResultsBody"></tbody>
+    </table>
   </div>
 </div>
 
@@ -357,6 +420,7 @@ let throttleAddress = 0;
 let throttleForward = true;
 let fnState = {};
 let speedDebounce = null;
+let pullTestRunning = false;
 
 function log(msg, cls='') {
   const el = document.getElementById('log');
@@ -392,6 +456,8 @@ function updateThrottleUI() {
   document.querySelectorAll('.btn-fn').forEach(b => b.disabled = !en);
   document.getElementById('btnFwd').classList.toggle('active', throttleForward);
   document.getElementById('btnRev').classList.toggle('active', !throttleForward);
+  // Pull test start button depends on throttle
+  document.getElementById('btnPullStart').disabled = !en || pullTestRunning;
 }
 
 function doAcquire() {
@@ -466,6 +532,67 @@ function buildFnButtons() {
     fnState[i] = false;
     row.appendChild(btn);
   }
+}
+
+// --- Pull Test ---
+
+function pullTestStart() {
+  const stepInc = parseInt(document.getElementById('pullStepInc').value) || 5;
+  const settleSec = parseFloat(document.getElementById('pullSettle').value) || 3.0;
+  const settleMs = Math.round(settleSec * 1000);
+  sendJson({action: 'pull_test_start', step_inc: stepInc, settle_ms: settleMs});
+  pullTestRunning = true;
+  document.getElementById('btnPullStart').disabled = true;
+  document.getElementById('btnPullStop').disabled = false;
+  document.getElementById('pullProgress').classList.remove('hidden');
+  document.getElementById('pullResults').classList.add('hidden');
+  document.getElementById('pullProgressText').textContent = 'Starting...';
+  document.getElementById('pullProgressBar').style.width = '0%';
+  log('Pull test started: inc=' + stepInc + ' settle=' + settleSec + 's');
+}
+
+function pullTestAbort() {
+  sendJson({action: 'pull_test_abort'});
+  log('Pull test abort requested', 'error');
+}
+
+function updatePullTestUI(running) {
+  pullTestRunning = running;
+  document.getElementById('btnPullStart').disabled = running || !throttleAcquired;
+  document.getElementById('btnPullStop').disabled = !running;
+}
+
+function showPullProgress(d) {
+  document.getElementById('pullProgress').classList.remove('hidden');
+  const pct = d.total_steps > 0 ? Math.round(d.current_step_num / d.total_steps * 100) : 0;
+  document.getElementById('pullProgressText').textContent =
+    'Step ' + d.step + '/126 (' + d.current_step_num + ' of ' + d.total_steps + ')  ' +
+    d.grams + 'g  Peak:' + d.peak_grams + 'g  Vib:' + (d.vib_rms || '--');
+  document.getElementById('pullProgressBar').style.width = pct + '%';
+  document.getElementById('pullPeak').textContent = d.peak_grams;
+}
+
+function showPullResults(d) {
+  updatePullTestUI(false);
+  document.getElementById('pullProgress').classList.add('hidden');
+  document.getElementById('pullResults').classList.remove('hidden');
+  document.getElementById('pullPeak').textContent = d.peak_grams;
+
+  const tbody = document.getElementById('pullResultsBody');
+  tbody.innerHTML = '';
+  if (d.entries) {
+    d.entries.forEach(e => {
+      const tr = document.createElement('tr');
+      if (e.step === d.peak_step && d.complete) tr.className = 'peak';
+      tr.innerHTML = '<td>' + e.step + '</td><td>' + e.pct + '%</td><td>' + e.grams + '</td>' +
+        '<td>' + (e.vib_pp != null ? e.vib_pp : '--') + '</td>' +
+        '<td>' + (e.vib_rms != null ? e.vib_rms : '--') + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+  const status = d.complete ? 'complete' : 'aborted';
+  log('Pull test ' + status + ': ' + (d.entries ? d.entries.length : 0) +
+    ' entries, peak=' + d.peak_grams + 'g at step ' + d.peak_step);
 }
 
 // --- Sensors ---
@@ -614,6 +741,12 @@ function handleMessage(msg) {
       document.getElementById('audioInfo').textContent =
         d.samples + ' samples / ' + d.duration_ms + ' ms';
       log('Audio: rms=' + d.rms_db + ' dB, peak=' + d.peak_db + ' dB');
+
+    } else if (d.type === 'pull_progress') {
+      showPullProgress(d);
+
+    } else if (d.type === 'pull_test') {
+      showPullResults(d);
     }
   } catch(e) {
     log('Parse error: ' + e, 'error');

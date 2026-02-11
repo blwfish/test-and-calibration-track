@@ -7,6 +7,7 @@
 #include "load_cell.h"
 #include "vibration.h"
 #include "audio_capture.h"
+#include "pull_test.h"
 
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -31,7 +32,7 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
         AwsFrameInfo* info = (AwsFrameInfo*)arg;
         if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
             // Null-terminate
-            char cmd[128];
+            char cmd[192];
             size_t copyLen = len < sizeof(cmd) - 1 ? len : sizeof(cmd) - 1;
             memcpy(cmd, data, copyLen);
             cmd[copyLen] = '\0';
@@ -95,6 +96,16 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                     } else if (strcmp(action, "release") == 0) {
                         mqtt_publish_throttle("release", "");
                         Serial.println("WS: Release throttle");
+
+                    // --- Pull test commands ---
+                    } else if (strcmp(action, "pull_test_start") == 0) {
+                        int stepInc = doc["step_inc"] | 5;
+                        unsigned long settleMs = doc["settle_ms"] | 3000UL;
+                        pull_test_start(stepInc, settleMs);
+                        Serial.printf("WS: Pull test start inc=%d settle=%lums\n", stepInc, settleMs);
+                    } else if (strcmp(action, "pull_test_abort") == 0) {
+                        pull_test_abort();
+                        Serial.println("WS: Pull test abort");
                     }
                 }
             }
@@ -230,6 +241,17 @@ void web_send_audio() {
 
 void web_send_throttle_status() {
     String json = buildThrottleStatusJson();
+    ws.textAll(json);
+}
+
+void web_send_pull_test() {
+    String json = pull_test_build_json();
+    ws.textAll(json);
+    mqtt_publish_pull_test(json);
+}
+
+void web_send_pull_progress() {
+    String json = pull_test_build_progress_json();
     ws.textAll(json);
 }
 
