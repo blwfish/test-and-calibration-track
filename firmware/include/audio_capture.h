@@ -20,6 +20,10 @@ bool audio_has_result();
 // Build JSON string with analysis results.
 String audio_build_json();
 
+// Get cached result values (valid after capture completes).
+float audio_get_rms_db();
+float audio_get_peak_db();
+
 // --- Analysis functions (exposed for unit testing) ---
 
 // Compute RMS of 16-bit signed samples, return as dB relative to full-scale.

@@ -162,6 +162,14 @@ bool audio_has_result() {
     return hasResult;
 }
 
+float audio_get_rms_db() {
+    return resultRmsDb;
+}
+
+float audio_get_peak_db() {
+    return resultPeakDb;
+}
+
 String audio_build_json() {
     JsonDocument doc;
     doc["type"] = "audio";

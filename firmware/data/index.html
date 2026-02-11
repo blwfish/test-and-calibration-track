@@ -301,7 +301,7 @@
   </div>
 
   <hr class="section-divider">
-  <div style="font-size:0.9em;color:#e94560;font-weight:600;margin-bottom:8px;">Pull + Vibration Sweep</div>
+  <div style="font-size:0.9em;color:#e94560;font-weight:600;margin-bottom:8px;">Pull + Vibration + Audio Sweep</div>
 
   <div class="pull-config">
     <label>Step inc:</label>
@@ -322,7 +322,7 @@
 
   <div class="pull-results hidden" id="pullResults">
     <table>
-      <thead><tr><th>Step</th><th>Throttle</th><th>Pull (g)</th><th>Vib P2P</th><th>Vib RMS</th></tr></thead>
+      <thead><tr><th>Step</th><th>Throttle</th><th>Pull (g)</th><th>Vib P2P</th><th>Vib RMS</th><th>Aud RMS</th><th>Aud Peak</th></tr></thead>
       <tbody id="pullResultsBody"></tbody>
     </table>
   </div>
@@ -567,7 +567,8 @@ function showPullProgress(d) {
   const pct = d.total_steps > 0 ? Math.round(d.current_step_num / d.total_steps * 100) : 0;
   document.getElementById('pullProgressText').textContent =
     'Step ' + d.step + '/126 (' + d.current_step_num + ' of ' + d.total_steps + ')  ' +
-    d.grams + 'g  Peak:' + d.peak_grams + 'g  Vib:' + (d.vib_rms || '--');
+    d.grams + 'g  Peak:' + d.peak_grams + 'g  Vib:' + (d.vib_rms || '--') +
+    '  Aud:' + (d.aud_rms || '--') + 'dB';
   document.getElementById('pullProgressBar').style.width = pct + '%';
   document.getElementById('pullPeak').textContent = d.peak_grams;
 }
@@ -586,7 +587,9 @@ function showPullResults(d) {
       if (e.step === d.peak_step && d.complete) tr.className = 'peak';
       tr.innerHTML = '<td>' + e.step + '</td><td>' + e.pct + '%</td><td>' + e.grams + '</td>' +
         '<td>' + (e.vib_pp != null ? e.vib_pp : '--') + '</td>' +
-        '<td>' + (e.vib_rms != null ? e.vib_rms : '--') + '</td>';
+        '<td>' + (e.vib_rms != null ? e.vib_rms : '--') + '</td>' +
+        '<td>' + (e.aud_rms != null ? e.aud_rms : '--') + '</td>' +
+        '<td>' + (e.aud_peak != null ? e.aud_peak : '--') + '</td>';
       tbody.appendChild(tr);
     });
   }

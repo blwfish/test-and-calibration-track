@@ -2,6 +2,7 @@
 #include "config.h"
 #include "load_cell.h"
 #include "vibration.h"
+#include "audio_capture.h"
 #include "mqtt_manager.h"
 
 #include <ArduinoJson.h>
@@ -12,7 +13,8 @@ enum PullTestState {
     PT_IDLE,
     PT_TARING,
     PT_SETTLING,
-    PT_CAPTURING,    // Vibration capture in progress
+    PT_VIB_CAPTURE,    // Vibration capture in progress
+    PT_AUDIO_CAPTURE,  // Audio capture in progress
     PT_READING,
     PT_DONE
 };
@@ -23,6 +25,8 @@ struct PullTestEntry {
     float pullGrams;
     uint16_t vibPeakToPeak;
     float vibRms;
+    float audioRmsDb;
+    float audioPeakDb;
 };
 
 // Configuration
@@ -171,27 +175,41 @@ void pull_test_process() {
             if (elapsed >= settleMs) {
                 // Start vibration capture before reading
                 vibration_start_capture();
-                state = PT_CAPTURING;
+                state = PT_VIB_CAPTURE;
                 stateEnteredMs = now;
             }
             break;
 
-        case PT_CAPTURING:
+        case PT_VIB_CAPTURE:
             // Wait for vibration capture to complete (driven by vibration_process() in main loop)
             if (!vibration_is_capturing()) {
+                // Start audio capture next
+                audio_start_capture();
+                state = PT_AUDIO_CAPTURE;
+                stateEnteredMs = now;
+            }
+            break;
+
+        case PT_AUDIO_CAPTURE:
+            // Wait for audio capture to complete (driven by audio_process() in main loop)
+            if (!audio_is_capturing()) {
                 state = PT_READING;
                 stateEnteredMs = now;
             }
             break;
 
         case PT_READING: {
-            // Read load cell and vibration results
+            // Read load cell, vibration, and audio results
             float grams = load_cell_get_grams();
             float pct = (float)currentStep / 126.0f * 100.0f;
 
             // Get vibration results from the just-completed capture
             uint16_t vibPP = vibration_get_peak_to_peak();
             float vibRms = vibration_get_rms();
+
+            // Get audio results from the just-completed capture
+            float audRmsDb = audio_get_rms_db();
+            float audPeakDb = audio_get_peak_db();
 
             // Store entry
             if (entryCount < MAX_ENTRIES) {
@@ -200,6 +218,8 @@ void pull_test_process() {
                 entries[entryCount].pullGrams = grams;
                 entries[entryCount].vibPeakToPeak = vibPP;
                 entries[entryCount].vibRms = vibRms;
+                entries[entryCount].audioRmsDb = audRmsDb;
+                entries[entryCount].audioPeakDb = audPeakDb;
                 entryCount++;
             }
 
@@ -209,8 +229,8 @@ void pull_test_process() {
                 peakStep = currentStep;
             }
 
-            Serial.printf("Pull test: step %d (%.1f%%) = %.1fg, vib p2p=%u rms=%.1f\n",
-                          currentStep, pct, grams, vibPP, vibRms);
+            Serial.printf("Pull test: step %d (%.1f%%) = %.1fg, vib p2p=%u rms=%.1f, audio rms=%.1fdB peak=%.1fdB\n",
+                          currentStep, pct, grams, vibPP, vibRms, audRmsDb, audPeakDb);
 
             // Advance to next step
             int next = nextStep(currentStep);
@@ -269,6 +289,8 @@ String pull_test_build_json() {
         e["grams"] = serialized(String(entries[i].pullGrams, 1));
         e["vib_pp"] = entries[i].vibPeakToPeak;
         e["vib_rms"] = serialized(String(entries[i].vibRms, 1));
+        e["aud_rms"] = serialized(String(entries[i].audioRmsDb, 1));
+        e["aud_peak"] = serialized(String(entries[i].audioPeakDb, 1));
     }
 
     String json;
@@ -288,6 +310,11 @@ String pull_test_build_progress_json() {
     // Include latest vibration reading if available
     if (vibration_has_result()) {
         doc["vib_rms"] = serialized(String(vibration_get_rms(), 1));
+    }
+
+    // Include latest audio reading if available
+    if (audio_has_result()) {
+        doc["aud_rms"] = serialized(String(audio_get_rms_db(), 1));
     }
 
     String json;
