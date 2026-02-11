@@ -8,6 +8,7 @@
 #include "vibration.h"
 #include "audio_capture.h"
 #include "pull_test.h"
+#include "track_switch.h"
 
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -43,8 +44,12 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                 if (action) {
                     // --- Sensor commands ---
                     if (strcmp(action, "arm") == 0) {
-                        sensor_arm();
-                        Serial.println("WS: Armed");
+                        if (!track_switch_allow_operation()) {
+                            Serial.println("WS: Arm blocked — track in layout mode");
+                        } else {
+                            sensor_arm();
+                            Serial.println("WS: Armed");
+                        }
                         web_send_status();
                     } else if (strcmp(action, "disarm") == 0) {
                         sensor_disarm();
@@ -67,12 +72,16 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
 
                     // --- Throttle commands (relay to JMRI bridge via MQTT) ---
                     } else if (strcmp(action, "acquire") == 0) {
-                        int addr = doc["address"] | 0;
-                        if (addr > 0) {
-                            bool isLong = doc["long"] | (addr >= 128);
-                            String payload = String(addr) + " " + (isLong ? "L" : "S");
-                            mqtt_publish_throttle("acquire", payload);
-                            Serial.printf("WS: Acquire %d (%s)\n", addr, isLong ? "long" : "short");
+                        if (!track_switch_allow_dcc_test()) {
+                            Serial.println("WS: Acquire blocked — not in DCC programming mode");
+                        } else {
+                            int addr = doc["address"] | 0;
+                            if (addr > 0) {
+                                bool isLong = doc["long"] | (addr >= 128);
+                                String payload = String(addr) + " " + (isLong ? "L" : "S");
+                                mqtt_publish_throttle("acquire", payload);
+                                Serial.printf("WS: Acquire %d (%s)\n", addr, isLong ? "long" : "short");
+                            }
                         }
                     } else if (strcmp(action, "throttle_speed") == 0) {
                         float val = doc["value"] | 0.0f;
@@ -96,6 +105,16 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* client,
                     } else if (strcmp(action, "release") == 0) {
                         mqtt_publish_throttle("release", "");
                         Serial.println("WS: Release throttle");
+
+                    // --- Track switch commands ---
+                    } else if (strcmp(action, "track_switch_enable") == 0) {
+                        bool en = doc["enabled"] | false;
+                        track_switch_set_enabled(en);
+                        Serial.printf("WS: Track switches %s\n", en ? "enabled" : "disabled");
+                        web_send_track_mode();
+                        web_send_status();
+                    } else if (strcmp(action, "track_mode") == 0) {
+                        web_send_track_mode();
 
                     // --- Pull test commands ---
                     } else if (strcmp(action, "pull_test_start") == 0) {
@@ -137,6 +156,12 @@ static String buildStatusJson() {
     doc["throttle_address"] = mqtt_get_throttle_address();
     doc["throttle_speed"] = mqtt_get_throttle_speed();
     doc["throttle_forward"] = mqtt_get_throttle_is_forward();
+
+    // Track switch mode
+    doc["track_switch_enabled"] = track_switch_enabled();
+    doc["track_mode"] = track_switch_mode_name(track_switch_get_mode());
+    doc["track_allow_dcc"] = track_switch_allow_dcc_test();
+    doc["track_allow_op"] = track_switch_allow_operation();
 
     if (sensor_get_state() == STATE_MEASURING) {
         const RunResult& r = sensor_get_result();
@@ -253,6 +278,12 @@ void web_send_pull_test() {
 void web_send_pull_progress() {
     String json = pull_test_build_progress_json();
     ws.textAll(json);
+}
+
+void web_send_track_mode() {
+    String json = track_switch_build_json();
+    ws.textAll(json);
+    mqtt_publish_track_mode(json);
 }
 
 void web_init() {

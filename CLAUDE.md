@@ -73,6 +73,8 @@ All PlatformIO commands run from `firmware/`:
 | HX711 load cell | GPIO 16 (DOUT), GPIO 17 (SCK) | Bit-banged |
 | Piezo ADC | GPIO 36 (VP) | ADC1 only (ADC2 conflicts with WiFi) |
 | INMP441 mic | GPIO 18 (SCK), 19 (WS), 23 (SD) | I2S0 input |
+| Track SW1 | GPIO 25 | Layout/Prog switch sense (HIGH = prog) |
+| Track SW2 | GPIO 26 | DCC/DC switch sense (HIGH = DC) |
 | UART0 (console) | GPIO 1, 3 | Reserved |
 
 Sensor pins are on MCP23017 GPA0-GPA7, GPB0-GPB7 with 10k external pullups.
@@ -91,6 +93,8 @@ All topics under `{prefix}/speed-cal/{name}/`:
 | `vibration` | to/from ESP32 | Start capture / publish analysis |
 | `audio` | to/from ESP32 | Start capture / publish analysis |
 | `result` | from ESP32 | Speed measurement JSON |
+| `pull_test` | from ESP32 | Pull test results JSON |
+| `track_mode` | from ESP32 | Track switch mode JSON |
 | `error` | from ESP32 | Error report |
 
 Default config: prefix=`/cova`, name=`speed-cal`, broker port 1883.
@@ -125,6 +129,11 @@ Configurable via web UI at `/api/mqtt` or NVS.
 - **No I2C pullups needed** — MCP23017 breakout board has them on-board.
 - **TCRT5000 breakout boards (LM393)** — digital output, no trimpot, built-in
   pullups. Bare TCRT5000 sensors would need external resistor networks.
+- **Track safety switches (optional)** — two 3PDT switches (SW1: layout/prog,
+  SW2: DCC/DC) with 3rd pole to GPIO 25/26 for sensing. Three derived modes:
+  LAYOUT (blocks all operations), PROG_DCC (normal calibration), PROG_DC
+  (mechanical testing only, DCC disabled). Configurable via NVS — all interlocks
+  bypass when switches not installed.
 
 ## JMRI Integration
 
@@ -203,6 +212,7 @@ Run tests: `python3 scripts/test_calibration_db.py`
 - [x] Phase 6b: Automated pull + vibration + audio sweep — firmware state machine + web UI
 - [x] Phase 6c: Calibration database (SQLite) — stores all measurement data keyed by roster ID
 - [x] Phase 6d: Consist support — multi-decoder locos, per-member audio adjustments, schema v2
+- [x] Phase 6e: Track safety switches — layout/prog + DCC/DC sensing, interlocks, web UI
 - [ ] Phase 7: JMRI roster integration (speed profile import, CV read/write bridge)
 - [ ] Phase 7b: Audio calibration (reference profiles, volume CV computation)
 - [ ] Phase 8: Fleet calibration
@@ -220,6 +230,10 @@ Run tests: `python3 scripts/test_calibration_db.py`
 - Piezo vibration capture (ADC, peak-to-peak and RMS analysis)
 - INMP441 audio capture (I2S, RMS dB and peak dB analysis)
 - Automated pull test state machine: tare → settle → vib capture → audio capture → read → advance
+- Track safety switch sensing: two 3PDT switches (layout/prog + DCC/DC) on GPIO 25/26
+  - Three derived modes: LAYOUT, PROG_DCC, PROG_DC with safety interlocks
+  - Web UI track mode badge, warning banners, button disabling
+  - NVS-persistent enable/disable (bypasses all interlocks when switches not installed)
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
 - 34 Python tests passing (calibration_db: locos, runs, entries, consists, audio adjustments)
 - JMRI Jython throttle bridge script ready

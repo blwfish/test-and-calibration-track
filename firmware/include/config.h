@@ -87,5 +87,11 @@
 #define AUDIO_DMA_BUF_COUNT   4       // Number of DMA buffers
 #define AUDIO_DMA_BUF_LEN     1024    // Samples per DMA buffer
 
+// --- Track Switches (optional 3PDT safety interlocks) ---
+#define TRACK_SW1_PIN             25      // Layout/Prog track switch (HIGH = prog)
+#define TRACK_SW2_PIN             26      // DCC/DC switch (HIGH = DC)
+#define TRACK_SWITCH_DEBOUNCE_MS  50      // Debounce time (ms)
+#define TRACK_SWITCH_NVS_NAMESPACE "trksw"
+
 // --- Serial ---
 #define SERIAL_BAUD   115200

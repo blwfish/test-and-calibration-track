@@ -29,3 +29,6 @@ void web_send_pull_test();
 
 // Send pull test progress to WebSocket clients.
 void web_send_pull_progress();
+
+// Send track switch mode to WebSocket clients and MQTT.
+void web_send_track_mode();

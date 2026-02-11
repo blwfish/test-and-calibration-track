@@ -194,6 +194,22 @@
   .btn-fn.active { background: #e94560; color: white; border-color: #e94560; }
   .btn-fn:disabled { opacity: 0.3; cursor: not-allowed; }
 
+  /* Track mode badge */
+  .track-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 0.8em; font-weight: 600; margin-left: 8px;
+    vertical-align: middle;
+  }
+  .track-badge.prog-dcc { background: #1b5e20; color: #66bb6a; }
+  .track-badge.prog-dc { background: #4a3800; color: #f5a623; }
+  .track-badge.layout { background: #7f0000; color: #ff8a80; }
+  .track-badge.unknown { background: #333; color: #888; }
+  .track-warning {
+    background: #4a0000; border: 1px solid #c0392b; border-radius: 6px;
+    padding: 10px 14px; margin-bottom: 12px; font-size: 0.85em;
+    color: #ff8a80; display: none;
+  }
+
   /* Settings */
   details.settings { margin-top: 12px; }
   details.settings summary {
@@ -201,6 +217,27 @@
     padding: 12px 0; user-select: none;
   }
   details.settings summary:hover { color: #e0e0e0; }
+
+  /* Toggle switch */
+  .toggle-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .toggle-row label { color: #888; font-size: 0.85em; }
+  .toggle {
+    position: relative; width: 44px; height: 24px; cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: #333; border-radius: 12px; transition: 0.3s;
+  }
+  .toggle .slider::before {
+    content: ""; position: absolute; width: 18px; height: 18px;
+    left: 3px; bottom: 3px; background: #888; border-radius: 50%;
+    transition: 0.3s;
+  }
+  .toggle input:checked + .slider { background: #1b5e20; }
+  .toggle input:checked + .slider::before {
+    transform: translateX(20px); background: #66bb6a;
+  }
 </style>
 </head>
 <body>
@@ -209,6 +246,10 @@
 <div class="subtitle">
   <span class="conn-dot disconnected" id="connDot"></span>
   <span id="connText">Connecting...</span>
+  <span class="track-badge unknown" id="trackBadge" style="display:none">--</span>
+</div>
+<div class="track-warning" id="trackWarning">
+  ⚠ Track is connected to layout bus. Sensor arming, throttle, and automated tests are disabled.
 </div>
 
 <!-- Locomotive Control -->
@@ -376,6 +417,17 @@
 <details class="settings">
   <summary>Settings</summary>
   <div class="card config-card">
+    <h2>Track Switches</h2>
+    <div class="toggle-row">
+      <label class="toggle">
+        <input type="checkbox" id="trackSwitchEnable" onchange="trackSwitchToggle(this.checked)">
+        <span class="slider"></span>
+      </label>
+      <label>Physical switches installed</label>
+    </div>
+    <div class="config-status" id="trackSwitchStatus">Not enabled (bypassed)</div>
+  </div>
+  <div class="card config-card">
     <h2>WiFi</h2>
     <div class="config-status" id="wifiStatus">--</div>
     <div class="config-status">MAC: <span id="macAddr" style="font-family:monospace;color:#e0e0e0;user-select:all">--</span></div>
@@ -422,6 +474,12 @@ let fnState = {};
 let speedDebounce = null;
 let pullTestRunning = false;
 
+// Track switch state
+let trackSwitchEnabled = false;
+let trackMode = 'unknown';
+let trackAllowDcc = true;
+let trackAllowOp = true;
+
 function log(msg, cls='') {
   const el = document.getElementById('log');
   const d = document.createElement('div');
@@ -445,10 +503,62 @@ function sendJson(obj) {
   }
 }
 
+// --- Track Switches ---
+
+function updateTrackModeUI() {
+  const badge = document.getElementById('trackBadge');
+  const warn = document.getElementById('trackWarning');
+  const chk = document.getElementById('trackSwitchEnable');
+  const stat = document.getElementById('trackSwitchStatus');
+  chk.checked = trackSwitchEnabled;
+
+  if (!trackSwitchEnabled) {
+    badge.style.display = 'none';
+    warn.style.display = 'none';
+    stat.textContent = 'Not enabled (all interlocks bypassed)';
+    return;
+  }
+  badge.style.display = 'inline-block';
+
+  const labels = {
+    'prog_dcc': 'DCC Prog', 'prog_dc': 'DC Prog',
+    'layout': 'LAYOUT', 'unknown': '?'
+  };
+  const classes = {
+    'prog_dcc': 'prog-dcc', 'prog_dc': 'prog-dc',
+    'layout': 'layout', 'unknown': 'unknown'
+  };
+  badge.textContent = labels[trackMode] || trackMode;
+  badge.className = 'track-badge ' + (classes[trackMode] || 'unknown');
+
+  if (trackMode === 'layout') {
+    warn.style.display = 'block';
+    warn.textContent = '⚠ Track is connected to layout bus. Sensor arming, throttle, and automated tests are disabled.';
+  } else if (trackMode === 'prog_dc') {
+    warn.style.display = 'block';
+    warn.textContent = '⚠ DC mode — DCC throttle commands disabled. Use vibration and load cell manually.';
+    warn.style.background = '#3a2e00';
+    warn.style.borderColor = '#f5a623';
+    warn.style.color = '#f5d080';
+  } else {
+    warn.style.display = 'none';
+  }
+
+  stat.textContent = 'Mode: ' + (labels[trackMode] || trackMode) +
+    ' | DCC: ' + (trackAllowDcc ? '✓' : '✗') +
+    ' | Operation: ' + (trackAllowOp ? '✓' : '✗');
+}
+
+function trackSwitchToggle(enabled) {
+  sendJson({action: 'track_switch_enable', enabled: enabled});
+  log('Track switches ' + (enabled ? 'enabled' : 'disabled'));
+}
+
 // --- Throttle ---
 
 function updateThrottleUI() {
-  const en = throttleAcquired;
+  const dccOk = trackAllowDcc;
+  const en = throttleAcquired && dccOk;
   document.getElementById('speedSlider').disabled = !en;
   document.getElementById('btnFwd').disabled = !en;
   document.getElementById('btnRev').disabled = !en;
@@ -456,8 +566,11 @@ function updateThrottleUI() {
   document.querySelectorAll('.btn-fn').forEach(b => b.disabled = !en);
   document.getElementById('btnFwd').classList.toggle('active', throttleForward);
   document.getElementById('btnRev').classList.toggle('active', !throttleForward);
-  // Pull test start button depends on throttle
+  // Pull test start button depends on throttle + DCC mode
   document.getElementById('btnPullStart').disabled = !en || pullTestRunning;
+  // Arm button depends on operation allowed
+  document.getElementById('btnArm').disabled =
+    !trackAllowOp || ['armed', 'measuring'].includes(document.getElementById('state').textContent);
 }
 
 function doAcquire() {
@@ -668,6 +781,14 @@ function handleMessage(msg) {
         mqttDot.className = 'conn-dot disconnected';
         mqttStat.textContent = 'Not configured';
       }
+      // Track switch from status
+      if ('track_switch_enabled' in d) {
+        trackSwitchEnabled = d.track_switch_enabled;
+        trackMode = d.track_mode;
+        trackAllowDcc = d.track_allow_dcc;
+        trackAllowOp = d.track_allow_op;
+        updateTrackModeUI();
+      }
       // Throttle from status
       if ('throttle_acquired' in d) {
         throttleAcquired = d.throttle_acquired;
@@ -750,6 +871,15 @@ function handleMessage(msg) {
 
     } else if (d.type === 'pull_test') {
       showPullResults(d);
+
+    } else if (d.type === 'track_mode') {
+      trackSwitchEnabled = d.enabled;
+      trackMode = d.mode;
+      trackAllowDcc = d.allow_dcc_test;
+      trackAllowOp = d.allow_operation;
+      updateTrackModeUI();
+      updateThrottleUI();
+      log('Track: ' + d.mode + (d.enabled ? '' : ' (switches disabled)'));
     }
   } catch(e) {
     log('Parse error: ' + e, 'error');

@@ -11,6 +11,7 @@
 #include "vibration.h"
 #include "audio_capture.h"
 #include "pull_test.h"
+#include "track_switch.h"
 
 // Serial command buffer
 static char cmdBuf[32];
@@ -46,6 +47,9 @@ static void printStatus() {
     Serial.println();
     Serial.printf("Vibration: %s\n", vibration_is_capturing() ? "capturing" : "idle");
     Serial.printf("Audio: %s\n", audio_is_capturing() ? "capturing" : "idle");
+    Serial.printf("Track mode: %s%s\n",
+        track_switch_mode_name(track_switch_get_mode()),
+        track_switch_enabled() ? "" : " (switches not installed)");
 }
 
 static void readSensors() {
@@ -60,8 +64,12 @@ static void readSensors() {
 
 static void processCommand(const char* cmd) {
     if (strcmp(cmd, "arm") == 0) {
-        sensor_arm();
-        Serial.println("Armed. Waiting for locomotive pass...");
+        if (!track_switch_allow_operation()) {
+            Serial.println("Arm blocked: track is in layout mode (switch to programming track).");
+        } else {
+            sensor_arm();
+            Serial.println("Armed. Waiting for locomotive pass...");
+        }
         web_send_status();
     } else if (strcmp(cmd, "disarm") == 0) {
         sensor_disarm();
@@ -155,6 +163,9 @@ void setup() {
     vibration_init();
     audio_init();
 
+    // Track safety switches (optional)
+    track_switch_init();
+
     // Start web server
     web_init();
 
@@ -183,6 +194,12 @@ void loop() {
     audio_process();
     if (audioWasCapturing && !audio_is_capturing()) {
         web_send_audio();
+    }
+
+    // Track switch sensing
+    track_switch_process();
+    if (track_switch_changed()) {
+        web_send_track_mode();
     }
 
     // Pull test state machine

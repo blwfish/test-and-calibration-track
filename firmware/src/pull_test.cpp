@@ -4,6 +4,7 @@
 #include "vibration.h"
 #include "audio_capture.h"
 #include "mqtt_manager.h"
+#include "track_switch.h"
 
 #include <ArduinoJson.h>
 
@@ -105,6 +106,10 @@ void pull_test_start(int step_inc, unsigned long settle_ms) {
     }
     if (!mqtt_get_throttle_acquired()) {
         Serial.println("Pull test: throttle not acquired");
+        return;
+    }
+    if (!track_switch_allow_dcc_test()) {
+        Serial.println("Pull test: blocked by track switch (not in DCC programming mode)");
         return;
     }
 
