@@ -7,6 +7,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "mqtt_manager.h"
+#include "mqtt_log.h"
 #include "load_cell.h"
 #include "vibration.h"
 #include "audio_capture.h"
@@ -134,7 +135,7 @@ void setup() {
 
     // Initialize MCP23017
     if (!mcp23017_init()) {
-        Serial.printf("ERROR: MCP23017 not found at 0x%02X!\n", MCP23017_ADDR);
+        logCriticalf("MCP23017 not found at 0x%02X", MCP23017_ADDR);
         Serial.println("Check wiring: SDA=GPIO21, SCL=GPIO22, VCC, GND");
         Serial.println("Halting.");
         while (true) { delay(1000); }
@@ -157,6 +158,9 @@ void setup() {
 
     // Start MQTT
     mqtt_init();
+
+    // Initialize MQTT logging (loads persisted level from NVS)
+    mqtt_log_init();
 
     // Initialize sensor peripherals
     load_cell_init();

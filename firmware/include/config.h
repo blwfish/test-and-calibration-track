@@ -96,5 +96,11 @@
 #define TRACK_SWITCH_DEBOUNCE_MS  50      // Debounce time (ms)
 #define TRACK_SWITCH_NVS_NAMESPACE "trksw"
 
+// --- MQTT Logging ---
+#define LOG_NVS_NAMESPACE     "mqttlog"
+#define LOG_FMT_BUF_SIZE      300     // Format buffer for log messages
+#define LOG_RATE_PERIOD_MS    1000    // Rate limit window (ms)
+#define LOG_RATE_MAX_PER_SEC  10      // Max log messages per second to MQTT
+
 // --- Serial ---
 #define SERIAL_BAUD   115200

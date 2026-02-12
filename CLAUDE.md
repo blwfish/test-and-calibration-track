@@ -100,6 +100,8 @@ All topics under `{prefix}/speed-cal/{name}/`:
 | `result` | from ESP32 | Speed measurement JSON |
 | `pull_test` | from ESP32 | Pull test results JSON |
 | `track_mode` | from ESP32 | Track switch mode JSON |
+| `log` | from ESP32 | Debug log: `[LEVEL][uptime_s] message` |
+| `log/set` | to ESP32 | Set log level: `"0"`-`"4"` or name (e.g. `"DEBUG"`) |
 | `error` | from ESP32 | Error report |
 
 Default config: prefix=`/cova`, name=`speed-cal`, broker port 1883.
@@ -290,6 +292,9 @@ python3 scripts/test_audio_calibrate.py   # 34 audio calibration tests
   - Decoder volume CV lookup (LokSound 5, Tsunami2, Econami, Digitrax, BLI, TCS)
   - dB-to-CV computation and optional auto-apply
   - Volume grading: quiet/normal/loud/EXCESSIVE based on fleet statistics
+- MQTT debug logging: optional remote log output via `log` topic
+  - 5 levels (DEBUG/INFO/WARN/ERROR/CRITICAL), runtime-adjustable via `log/set`
+  - Rate-limited (10 msg/sec), NVS-persistent level, ERROR+ always echoed to Serial
 - 43 native unit tests passing (speed_calc: 13, load_cell: 9, vibration: 10, audio: 11)
 - 89 Python tests passing (calibration_db: 34, jmri_bridge: 21, audio_calibrate: 34)
 - JMRI Jython throttle bridge with roster, CV, and speed profile import handlers

@@ -48,6 +48,9 @@ void mqtt_publish_pull_test(const String& json);
 // Publish track switch mode (JSON) to {prefix}/speed-cal/{name}/track_mode
 void mqtt_publish_track_mode(const String& json);
 
+// Publish a log message to {prefix}/speed-cal/{name}/log
+void mqtt_publish_log(const char* msg);
+
 // --- Throttle bridge relay (ESP32 → JMRI via MQTT) ---
 
 // Publish a throttle command to {prefix}/speed-cal/throttle/{suffix}

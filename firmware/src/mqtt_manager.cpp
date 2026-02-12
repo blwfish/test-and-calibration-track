@@ -1,4 +1,5 @@
 #include "mqtt_manager.h"
+#include "mqtt_log.h"
 #include "config.h"
 #include "sensor_array.h"
 #include "web_server.h"
@@ -85,7 +86,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // --- Sensor command topics ---
     if (topicStr == buildTopic("arm")) {
         sensor_arm();
-        Serial.println("MQTT: Armed");
+        logInfo("MQTT: Armed");
         web_send_status();
         mqtt_publish_status("");
     } else if (topicStr == buildTopic("stop")) {
@@ -108,6 +109,14 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else if (topicStr == buildTopic("audio")) {
         audio_start_capture();
         Serial.println("MQTT: Audio capture started");
+
+    // --- Log level control ---
+    } else if (topicStr == buildTopic("log/set")) {
+        char buf[16];
+        unsigned int copyLen = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+        mqtt_log_handle_command(buf, copyLen);
 
     // --- Throttle bridge status ---
     } else if (topicStr == buildThrottleTopic("status")) {
@@ -134,7 +143,7 @@ static void mqttConnect() {
     }
 
     String clientId = "speedcal-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-    Serial.printf("MQTT: Connecting to %s as %s...\n", broker.c_str(), clientId.c_str());
+    logInfof("MQTT: Connecting to %s as %s", broker.c_str(), clientId.c_str());
 
     if (mqttClient.connect(clientId.c_str())) {
         Serial.println("MQTT: Connected!");
@@ -148,6 +157,9 @@ static void mqttConnect() {
         mqttClient.subscribe(buildTopic("vibration").c_str());
         mqttClient.subscribe(buildTopic("audio").c_str());
 
+        // Subscribe to log level control
+        mqttClient.subscribe(buildTopic("log/set").c_str());
+
         // Subscribe to throttle bridge status
         mqttClient.subscribe(buildThrottleTopic("status").c_str());
 
@@ -156,7 +168,7 @@ static void mqttConnect() {
         Serial.printf("MQTT: Subscribed to %s/status\n",
             (prefix + "/speed-cal/" THROTTLE_TOPIC_NAME).c_str());
     } else {
-        Serial.printf("MQTT: Connection failed, rc=%d\n", mqttClient.state());
+        logErrorf("MQTT: Connection failed, rc=%d", mqttClient.state());
     }
 }
 
@@ -275,6 +287,14 @@ void mqtt_publish_pull_test(const String& json) {
 void mqtt_publish_track_mode(const String& json) {
     if (mqttClient.connected()) {
         mqttClient.publish(buildTopic("track_mode").c_str(), json.c_str());
+    }
+}
+
+// --- Log publish ---
+
+void mqtt_publish_log(const char* msg) {
+    if (mqttClient.connected()) {
+        mqttClient.publish(buildTopic("log").c_str(), msg);
     }
 }
 

@@ -1,4 +1,5 @@
 #include "mcp23017.h"
+#include "mqtt_log.h"
 
 bool mcp23017_write_reg(uint8_t reg, uint8_t value) {
     Wire.beginTransmission(MCP23017_ADDR);
@@ -6,7 +7,7 @@ bool mcp23017_write_reg(uint8_t reg, uint8_t value) {
     Wire.write(value);
     uint8_t err = Wire.endTransmission();
     if (err != 0) {
-        Serial.printf("MCP23017: I2C write error %d (reg 0x%02X)\n", err, reg);
+        logErrorf("MCP23017: I2C write error %d (reg 0x%02X)", err, reg);
         return false;
     }
     return true;
@@ -17,12 +18,12 @@ uint8_t mcp23017_read_reg(uint8_t reg) {
     Wire.write(reg);
     uint8_t err = Wire.endTransmission();
     if (err != 0) {
-        Serial.printf("MCP23017: I2C write error %d (reg 0x%02X)\n", err, reg);
+        logErrorf("MCP23017: I2C write error %d (reg 0x%02X)", err, reg);
         return 0xFF;
     }
     Wire.requestFrom((uint8_t)MCP23017_ADDR, (uint8_t)1);
     if (Wire.available() < 1) {
-        Serial.printf("MCP23017: I2C read error (reg 0x%02X)\n", reg);
+        logErrorf("MCP23017: I2C read error (reg 0x%02X)", reg);
         return 0xFF;
     }
     return Wire.read();

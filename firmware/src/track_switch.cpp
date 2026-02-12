@@ -1,4 +1,5 @@
 #include "track_switch.h"
+#include "mqtt_log.h"
 #include "config.h"
 
 #include <Preferences.h>
@@ -97,7 +98,7 @@ void track_switch_process() {
     if (newMode != currentMode) {
         currentMode = newMode;
         modeChanged = true;
-        Serial.printf("Track switch: mode changed → %s\n",
+        logInfof("Track switch: mode changed -> %s",
             track_switch_mode_name(currentMode));
     }
 }

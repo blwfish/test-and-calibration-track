@@ -1,4 +1,5 @@
 #include "load_cell.h"
+#include "mqtt_log.h"
 #include "config.h"
 
 #include <ArduinoJson.h>
@@ -82,7 +83,7 @@ void load_cell_init() {
     calFactor = prefs.getFloat("cal", LOAD_CELL_CAL_FACTOR);
     prefs.end();
 
-    Serial.println("HX711 load cell initialized.");
+    logInfo("HX711 load cell initialized");
     Serial.printf("  DOUT=GPIO%d, SCK=GPIO%d, cal=%.1f\n",
                   HX711_DOUT_PIN, HX711_SCK_PIN, calFactor);
 }
@@ -98,7 +99,7 @@ void load_cell_process() {
     if (!hx711_read_raw(raw)) {
         notReadyCount++;
         if (notReadyCount == HX711_TIMEOUT_POLLS) {
-            Serial.println("HX711: WARNING: not responding (DOUT stuck HIGH). Check wiring.");
+            logWarn("HX711: not responding (DOUT stuck HIGH). Check wiring");
         }
         return;  // HX711 not ready yet
     }
